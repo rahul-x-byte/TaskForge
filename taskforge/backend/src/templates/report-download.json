@@ -1,0 +1,24 @@
+[
+  {
+    "action": "navigate",
+    "timestamp": 1700000000000,
+    "selectors": { "css": "window" },
+    "value": "http://localhost:3001/login",
+    "pageUrl": "http://localhost:3001/login"
+  },
+  {
+    "action": "click",
+    "timestamp": 1700000000100,
+    "selectors": { "css": "#download-report-btn", "role": "link", "name": "Download Report", "text": "Download Report" },
+    "isSensitive": false,
+    "pageUrl": "http://localhost:3001/reports"
+  },
+  {
+    "action": "download",
+    "timestamp": 1700000000200,
+    "selectors": { "css": "#download-report-btn" },
+    "value": "report_{{date}}.csv",
+    "isDownloadAction": true,
+    "pageUrl": "http://localhost:3001/reports"
+  }
+]

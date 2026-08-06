@@ -1,0 +1,30 @@
+[
+  {
+    "action": "navigate",
+    "timestamp": 1700000000000,
+    "selectors": { "css": "window" },
+    "value": "http://localhost:3001/form",
+    "pageUrl": "http://localhost:3001/form"
+  },
+  {
+    "action": "input",
+    "timestamp": 1700000000100,
+    "selectors": { "css": "input[name='full_name']", "role": "textbox", "name": "Full Name" },
+    "value": "{{row.full_name}}",
+    "pageUrl": "http://localhost:3001/form"
+  },
+  {
+    "action": "input",
+    "timestamp": 1700000000200,
+    "selectors": { "css": "input[name='email_address']", "role": "textbox", "name": "Email Address" },
+    "value": "{{row.email_address}}",
+    "pageUrl": "http://localhost:3001/form"
+  },
+  {
+    "action": "click",
+    "timestamp": 1700000000300,
+    "selectors": { "css": "button[type='submit']", "role": "button", "name": "Submit Form" },
+    "isSensitive": true,
+    "pageUrl": "http://localhost:3001/form"
+  }
+]

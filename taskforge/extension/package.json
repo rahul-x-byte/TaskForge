@@ -1,0 +1,13 @@
+{
+  "name": "@taskforge/extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.263",
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>TaskForge Recorder</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        width: 260px;
+        padding: 16px;
+        margin: 0;
+        background: #0f172a;
+        color: #f8fafc;
+      }
+      .card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+      }
+      h2 {
+        margin: 0;
+        font-size: 1.1rem;
+        color: #38bdf8;
+      }
+      .badge {
+        padding: 4px 10px;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        background: #334155;
+        color: #94a3b8;
+      }
+      .badge.active {
+        background: #ef4444;
+        color: #ffffff;
+        animation: pulse 1.5s infinite;
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.6; }
+      }
+      button {
+        width: 100%;
+        padding: 10px;
+        border: none;
+        border-radius: 6px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.2s ease;
+      }
+      .btn-start {
+        background: #0284c7;
+        color: #ffffff;
+      }
+      .btn-start:hover {
+        background: #0369a1;
+      }
+      .btn-stop {
+        background: #dc2626;
+        color: #ffffff;
+      }
+      .btn-stop:hover {
+        background: #b91c1c;
+      }
+      .count {
+        font-size: 0.8rem;
+        color: #94a3b8;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h2>TaskForge Recorder</h2>
+      <div id="status-badge" class="badge">Idle</div>
+      <button id="toggle-btn" class="btn-start">Start Recording</button>
+      <div id="action-count" class="count">0 actions recorded</div>
+    </div>
+    <script type="module" src="dist/popup.js"></script>
+  </body>
+</html>

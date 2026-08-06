@@ -1,0 +1,9 @@
+{
+  "name": "extension-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix taskforge run dev",
+    "start": "npm --prefix taskforge run dev"
+  }
+}

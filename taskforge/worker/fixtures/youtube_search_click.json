@@ -1,0 +1,47 @@
+{
+  "id": "wf_youtube_search_click_test",
+  "name": "YouTube Search and Click Video Test",
+  "description": "Fixture simulating YouTube search and clicking a specific video by videoId",
+  "steps": [
+    {
+      "action": "navigate",
+      "timestamp": 1722700000000,
+      "selectors": { "css": "window" },
+      "value": "https://www.youtube.com",
+      "pageUrl": "https://www.youtube.com"
+    },
+    {
+      "action": "input",
+      "timestamp": 1722700001000,
+      "selectors": {
+        "role": "combobox",
+        "name": "Search",
+        "css": "input#search"
+      },
+      "value": "Rick Astley - Never Gonna Give You Up",
+      "pageUrl": "https://www.youtube.com"
+    },
+    {
+      "action": "click",
+      "timestamp": 1722700002000,
+      "selectors": {
+        "role": "button",
+        "name": "Search",
+        "css": "button#search-icon-legacy"
+      },
+      "pageUrl": "https://www.youtube.com"
+    },
+    {
+      "action": "click",
+      "timestamp": 1722700005000,
+      "selectors": {
+        "videoId": "dQw4w9WgXcQ",
+        "role": "link",
+        "name": "Rick Astley - Never Gonna Give You Up (Official Music Video)",
+        "text": "Rick Astley - Never Gonna Give You Up (Official Music Video)",
+        "css": "a#video-title"
+      },
+      "pageUrl": "https://www.youtube.com/results?search_query=Rick+Astley+-+Never+Gonna+Give+You+Up"
+    }
+  ]
+}

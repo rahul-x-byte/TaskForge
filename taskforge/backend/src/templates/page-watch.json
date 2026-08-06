@@ -1,0 +1,24 @@
+[
+  {
+    "action": "navigate",
+    "timestamp": 1700000000000,
+    "selectors": { "css": "window" },
+    "value": "http://localhost:3001/status",
+    "pageUrl": "http://localhost:3001/status"
+  },
+  {
+    "action": "check_change",
+    "timestamp": 1700000000100,
+    "selectors": { "css": ".status-indicator", "text": "Status Page" },
+    "value": "snapshot_comparison",
+    "snapshotKey": "previous_page_snapshot",
+    "pageUrl": "http://localhost:3001/status"
+  },
+  {
+    "action": "notify",
+    "timestamp": 1700000000200,
+    "selectors": { "css": "window" },
+    "value": "console.log('[Page Watcher] Detected content change on target page')",
+    "pageUrl": "http://localhost:3001/status"
+  }
+]

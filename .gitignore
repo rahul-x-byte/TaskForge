@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Production Builds
+dist/
+**/dist/
+
+# Temporary / Generated Files
+downloads/
+**/downloads/
+failures/
+**/failures/
+*.log
+*.zip
+*.png
+
+# Environment
+.env
+.env.local
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Backup folders
+taskforge copy/
