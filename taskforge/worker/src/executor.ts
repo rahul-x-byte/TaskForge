@@ -1,7 +1,9 @@
-import { chromium, Browser, BrowserContext, Page, Locator } from 'playwright';
+import playwright, { type Browser, type BrowserContext, type Page, type Locator } from 'playwright';
 import * as path from 'path';
 import * as fs from 'fs';
 import { SelectorBundle, RecordedAction } from '@taskforge/shared';
+
+const { chromium } = playwright;
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:3001';
 const DOWNLOADS_DIR = path.resolve(process.cwd(), 'downloads');

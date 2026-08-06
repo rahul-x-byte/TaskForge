@@ -1,6 +1,7 @@
-import { chromium } from 'playwright';
+import playwright from 'playwright';
 import * as path from 'path';
 import * as fs from 'fs';
+const { chromium } = playwright;
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:3001';
 const DOWNLOADS_DIR = path.resolve(process.cwd(), 'downloads');
 const FAILURES_DIR = path.resolve(process.cwd(), 'failures');
