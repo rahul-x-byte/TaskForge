@@ -9,7 +9,6 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { pool } from './db/index.js';
 import { workflowQueue } from './queue/index.js';
-import { executeWorkflowRun } from '../../worker/src/executor.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -304,19 +303,12 @@ fastify.post('/api/workflows/:id/run', async (request, reply) => {
       [runId, id, versionId]
     );
 
-    // Enqueue job in BullMQ
+    // Enqueue job in BullMQ for worker service processing
     await workflowQueue.add('execute-workflow', {
       workflowId: id,
       versionId,
       runId,
     });
-
-    // Directly trigger Playwright worker execution in background
-    setTimeout(() => {
-      executeWorkflowRun(id, versionId, runId).catch((err) => {
-        console.error('[Direct Worker Execution Error]', err);
-      });
-    }, 100);
 
     return reply.status(202).send({
       message: 'Workflow run enqueued and started',

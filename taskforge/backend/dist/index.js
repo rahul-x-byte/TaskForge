@@ -2,11 +2,15 @@ import Fastify from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyFormbody from '@fastify/formbody';
 import fastifyCors from '@fastify/cors';
-import { spawn } from 'child_process';
-import path from 'path';
+import fastifyStatic from '@fastify/static';
 import { v4 as uuidv4 } from 'uuid';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { pool } from './db/index.js';
 import { workflowQueue } from './queue/index.js';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const fastify = Fastify({
     logger: true,
 });
@@ -20,6 +24,20 @@ await fastify.register(fastifyCors, {
 });
 await fastify.register(fastifyWebsocket);
 await fastify.register(fastifyFormbody);
+// Serve Frontend Static Bundle if built
+const frontendDistPath = path.join(__dirname, '../../frontend/dist');
+if (fs.existsSync(frontendDistPath)) {
+    await fastify.register(fastifyStatic, {
+        root: frontendDistPath,
+        prefix: '/',
+    });
+    fastify.setNotFoundHandler((request, reply) => {
+        if (request.raw.url && (request.raw.url.startsWith('/api') || request.raw.url.startsWith('/ws'))) {
+            return reply.status(404).send({ error: 'Endpoint not found' });
+        }
+        return reply.sendFile('index.html', frontendDistPath);
+    });
+}
 // Health check endpoint
 fastify.get('/health', async () => {
     return { status: 'ok', service: 'backend' };
@@ -90,6 +108,52 @@ fastify.post('/api/recordings', async (request, reply) => {
         return reply.status(500).send({ error: 'Failed to save recording', message: err?.message });
     }
 });
+// 1b. POST /api/workflows/from-template — Create workflow pre-populated from JSON fixture template
+fastify.post('/api/workflows/from-template', async (request, reply) => {
+    const { templateId } = (request.body || {});
+    if (!templateId) {
+        return reply.status(400).send({ error: 'templateId is required' });
+    }
+    const templateNames = {
+        'report-download': 'Report Download Workflow',
+        'form-fill': 'Spreadsheet Form-Fill Workflow',
+        'page-watch': 'Page Change Watcher Workflow',
+    };
+    const name = templateNames[templateId] || `Template Workflow (${templateId})`;
+    const fixturePath = path.join(__dirname, 'templates', `${templateId}.json`);
+    let steps = [];
+    try {
+        if (fs.existsSync(fixturePath)) {
+            const fileContent = fs.readFileSync(fixturePath, 'utf-8');
+            steps = JSON.parse(fileContent);
+        }
+        else {
+            return reply.status(404).send({ error: `Template fixture '${templateId}' not found` });
+        }
+    }
+    catch (err) {
+        fastify.log.error(err);
+        return reply.status(500).send({ error: 'Failed to read template fixture', message: err?.message });
+    }
+    const workflowId = uuidv4();
+    const versionId = uuidv4();
+    try {
+        await pool.query(`INSERT INTO workflows (id, name, created_at) VALUES ($1, $2, NOW())`, [workflowId, name]);
+        await pool.query(`INSERT INTO workflow_versions (id, workflow_id, steps, created_at) VALUES ($1, $2, $3, NOW())`, [versionId, workflowId, JSON.stringify(steps)]);
+        await pool.query(`UPDATE workflows SET current_version_id = $1 WHERE id = $2`, [versionId, workflowId]);
+        return reply.status(201).send({
+            message: 'Workflow created from template successfully',
+            workflowId,
+            versionId,
+            name,
+            stepCount: steps.length,
+        });
+    }
+    catch (err) {
+        fastify.log.error(err);
+        return reply.status(500).send({ error: 'Failed to create workflow from template', message: err?.message });
+    }
+});
 // 2. GET /api/workflows — List all workflows
 fastify.get('/api/workflows', async (request, reply) => {
     try {
@@ -100,6 +164,7 @@ fastify.get('/api/workflows', async (request, reply) => {
         const list = res.rows.map((wf) => ({
             ...wf,
             schedule: memorySchedules.get(wf.id) || null,
+            lastStatus: wf.lastStatus || wf.last_status || 'never_run',
         }));
         return reply.send(list);
     }
@@ -128,7 +193,35 @@ fastify.get('/api/workflows/:id', async (request, reply) => {
         return reply.status(500).send({ error: 'Failed to fetch workflow', message: err?.message });
     }
 });
-// 4. POST /api/workflows/:id/run — Enqueue a run job & trigger worker process
+// In-memory credentials map for temporary execution storage (runId -> { stepIndex, value })
+const pendingCredentialsMap = new Map();
+// 3b. PUT /api/workflows/:id/steps — Update workflow steps
+fastify.put('/api/workflows/:id/steps', async (request, reply) => {
+    const { id } = request.params;
+    const { steps } = (request.body || {});
+    if (!Array.isArray(steps)) {
+        return reply.status(400).send({ error: 'steps must be an array' });
+    }
+    try {
+        const wfRes = await pool.query(`SELECT id, current_version_id FROM workflows WHERE id = $1`, [id]);
+        if (wfRes.rows.length === 0 || !wfRes.rows[0].current_version_id) {
+            return reply.status(404).send({ error: 'Workflow or active version not found' });
+        }
+        const versionId = wfRes.rows[0].current_version_id;
+        await pool.query(`UPDATE workflow_versions SET steps = $1 WHERE id = $2`, [JSON.stringify(steps), versionId]);
+        return reply.send({
+            message: 'Workflow steps updated successfully',
+            workflowId: id,
+            versionId,
+            stepCount: steps.length,
+        });
+    }
+    catch (err) {
+        fastify.log.error(err);
+        return reply.status(500).send({ error: 'Failed to update workflow steps', message: err?.message });
+    }
+});
+// 4. POST /api/workflows/:id/run — Enqueue a run job & trigger worker execution
 fastify.post('/api/workflows/:id/run', async (request, reply) => {
     const { id } = request.params;
     try {
@@ -144,21 +237,11 @@ fastify.post('/api/workflows/:id/run', async (request, reply) => {
         const versionId = workflow.current_version_id;
         // Create run record in DB
         await pool.query(`INSERT INTO runs (id, workflow_id, version_id, status, started_at) VALUES ($1, $2, $3, 'pending', NOW())`, [runId, id, versionId]);
-        // Enqueue job in BullMQ
+        // Enqueue job in BullMQ for worker service processing
         await workflowQueue.add('execute-workflow', {
             workflowId: id,
             versionId,
             runId,
-        });
-        // Spawn worker execution process via CLI
-        const workerScript = path.resolve(process.cwd(), '../worker/src/cli.ts');
-        const child = spawn('npx', ['tsx', workerScript, id, versionId, runId], {
-            shell: true,
-            stdio: 'inherit',
-            cwd: process.cwd(),
-        });
-        child.on('error', (spawnErr) => {
-            console.error('[Worker Spawn Error]', spawnErr);
         });
         return reply.status(202).send({
             message: 'Workflow run enqueued and started',
@@ -231,6 +314,13 @@ fastify.patch('/api/runs/:id/status', async (request, reply) => {
     try {
         const res = await pool.query(`UPDATE runs SET status = $1 WHERE id = $2 RETURNING *`, [status, id]);
         const run = res.rows[0] || { id, status };
+        if (detail) {
+            run.detail = detail;
+            if (typeof detail.stepIndex === 'number') {
+                run.current_step_index = detail.stepIndex;
+            }
+        }
+        // Broadcast status update
         broadcastRunUpdate(id, {
             type: 'STATUS_UPDATE',
             runId: id,
@@ -239,12 +329,53 @@ fastify.patch('/api/runs/:id/status', async (request, reply) => {
             error,
             timestamp: Date.now(),
         });
+        // Broadcast specific CREDENTIALS_REQUIRED event if awaiting credentials
+        if (status === 'awaiting_credentials') {
+            broadcastRunUpdate(id, {
+                type: 'CREDENTIALS_REQUIRED',
+                runId: id,
+                status,
+                detail,
+                timestamp: Date.now(),
+            });
+        }
         return reply.send({ message: 'Run status updated', run });
     }
     catch (err) {
         fastify.log.error(err);
         return reply.status(500).send({ error: 'Failed to update run status', message: err?.message });
     }
+});
+// 8b. POST /api/runs/:id/credentials — Submit sensitive credentials in memory
+fastify.post('/api/runs/:id/credentials', async (request, reply) => {
+    const { id } = request.params;
+    const { stepIndex, value } = (request.body || {});
+    if (value === undefined || value === null) {
+        return reply.status(400).send({ error: 'Credential value is required' });
+    }
+    // Store credential value ONLY in memory
+    pendingCredentialsMap.set(id, { stepIndex: stepIndex ?? 0, value });
+    // Resume status to running
+    await pool.query(`UPDATE runs SET status = 'running' WHERE id = $1`, [id]);
+    broadcastRunUpdate(id, {
+        type: 'CREDENTIALS_SUBMITTED',
+        runId: id,
+        status: 'running',
+        detail: { stepIndex },
+        timestamp: Date.now(),
+    });
+    return reply.send({ message: 'Credentials accepted' });
+});
+// 8c. GET /api/runs/:id/credentials — Worker retrieves and clears memory credential
+fastify.get('/api/runs/:id/credentials', async (request, reply) => {
+    const { id } = request.params;
+    const cred = pendingCredentialsMap.get(id);
+    if (cred) {
+        // Delete immediately on retrieval to purge secret from memory
+        pendingCredentialsMap.delete(id);
+        return reply.send({ found: true, credential: cred });
+    }
+    return reply.send({ found: false });
 });
 // 9. POST /api/runs/:id/approve — Resolve a pending approval gate
 fastify.post('/api/runs/:id/approve', async (request, reply) => {
@@ -282,6 +413,98 @@ fastify.post('/api/runs/:id/cancel', async (request, reply) => {
     catch (err) {
         fastify.log.error(err);
         return reply.status(500).send({ error: 'Failed to cancel run', message: err?.message });
+    }
+});
+// 11. GET /api/runs/:id/download — Download resulting report file directly to browser
+fastify.get('/api/runs/:id/download', async (request, reply) => {
+    const { id } = request.params;
+    try {
+        const res = await pool.query(`SELECT * FROM runs WHERE id = $1`, [id]);
+        const run = res.rows[0];
+        let filePath = run?.detail?.downloadedFilePath;
+        if (!filePath || !fs.existsSync(filePath)) {
+            const downloadsDir = path.join(process.cwd(), '../worker/downloads');
+            if (fs.existsSync(downloadsDir)) {
+                const files = fs.readdirSync(downloadsDir).map((f) => ({
+                    name: f,
+                    path: path.join(downloadsDir, f),
+                    time: fs.statSync(path.join(downloadsDir, f)).mtimeMs,
+                }));
+                files.sort((a, b) => b.time - a.time);
+                if (files.length > 0) {
+                    filePath = files[0].path;
+                }
+            }
+        }
+        if (!filePath || !fs.existsSync(filePath)) {
+            return reply.status(404).send({ error: 'Downloaded report file not found on disk' });
+        }
+        const filename = path.basename(filePath);
+        const ext = path.extname(filePath).toLowerCase();
+        let contentType = 'application/octet-stream';
+        if (ext === '.pdf')
+            contentType = 'application/pdf';
+        else if (ext === '.csv')
+            contentType = 'text/csv';
+        else if (ext === '.html' || ext === '.htm')
+            contentType = 'text/html; charset=utf-8';
+        reply
+            .type(contentType)
+            .header('Content-Disposition', `attachment; filename="${filename}"`)
+            .send(fs.readFileSync(filePath));
+    }
+    catch (err) {
+        fastify.log.error(err);
+        return reply.status(500).send({ error: 'Failed to download report file', message: err?.message });
+    }
+});
+// 12. GET /api/runs/:id/preview — Serve report file inline for browser preview
+fastify.get('/api/runs/:id/preview', async (request, reply) => {
+    const { id } = request.params;
+    try {
+        const res = await pool.query(`SELECT * FROM runs WHERE id = $1`, [id]);
+        const run = res.rows[0];
+        let filePath = run?.detail?.downloadedFilePath;
+        if (!filePath || !fs.existsSync(filePath)) {
+            const downloadsDir = path.join(process.cwd(), '../worker/downloads');
+            if (fs.existsSync(downloadsDir)) {
+                const files = fs.readdirSync(downloadsDir).map((f) => ({
+                    name: f,
+                    path: path.join(downloadsDir, f),
+                    time: fs.statSync(path.join(downloadsDir, f)).mtimeMs,
+                }));
+                files.sort((a, b) => b.time - a.time);
+                if (files.length > 0) {
+                    filePath = files[0].path;
+                }
+            }
+        }
+        if (!filePath || !fs.existsSync(filePath)) {
+            return reply.status(404).send({ error: 'Report preview file not found' });
+        }
+        const ext = path.extname(filePath).toLowerCase();
+        let contentType = 'application/octet-stream';
+        if (ext === '.pdf')
+            contentType = 'application/pdf';
+        else if (ext === '.csv')
+            contentType = 'text/csv';
+        else if (ext === '.txt')
+            contentType = 'text/plain; charset=utf-8';
+        else if (ext === '.html' || ext === '.htm')
+            contentType = 'text/html; charset=utf-8';
+        else if (ext === '.png')
+            contentType = 'image/png';
+        else if (ext === '.jpg' || ext === '.jpeg')
+            contentType = 'image/jpeg';
+        const filename = path.basename(filePath);
+        reply
+            .type(contentType)
+            .header('Content-Disposition', `inline; filename="${filename}"`)
+            .send(fs.readFileSync(filePath));
+    }
+    catch (err) {
+        fastify.log.error(err);
+        return reply.status(500).send({ error: 'Failed to preview report', message: err?.message });
     }
 });
 // -------------------------------------------------------------

@@ -81,6 +81,17 @@ export async function query(text, params = []) {
         }
         return { rows: wf ? [wf] : [] };
     }
+    // 3b. UPDATE workflow_versions SET steps
+    if (normalizedSql.startsWith('update workflow_versions set steps')) {
+        const [steps, versionId] = params;
+        const stepsArr = typeof steps === 'string' ? JSON.parse(steps) : steps;
+        const ver = memoryVersions.get(versionId);
+        if (ver) {
+            ver.steps = stepsArr;
+            memoryVersions.set(versionId, ver);
+        }
+        return { rows: ver ? [ver] : [] };
+    }
     // 4. SELECT FROM workflows LEFT JOIN workflow_versions
     if (normalizedSql.includes('from workflows') && normalizedSql.includes('left join workflow_versions')) {
         if (params.length > 0 && normalizedSql.includes('where w.id =')) {
@@ -88,12 +99,40 @@ export async function query(text, params = []) {
             if (!wf)
                 return { rows: [] };
             const ver = memoryVersions.get(wf.current_version_id);
-            return { rows: [{ ...wf, steps: ver ? ver.steps : [] }] };
+            const wfRuns = Array.from(memoryRuns.values()).filter((r) => r.workflow_id === wf.id);
+            let lastStatus = 'never_run';
+            if (wfRuns.length > 0) {
+                wfRuns.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
+                const latestStatus = wfRuns[0].status;
+                if (latestStatus === 'completed' || latestStatus === 'success')
+                    lastStatus = 'success';
+                else if (latestStatus === 'failed' || latestStatus === 'timed_out')
+                    lastStatus = 'failed';
+                else if (latestStatus === 'awaiting_approval' || latestStatus === 'awaiting_credentials' || latestStatus === 'pending' || latestStatus === 'running')
+                    lastStatus = 'awaiting_approval';
+                else
+                    lastStatus = 'never_run';
+            }
+            return { rows: [{ ...wf, steps: ver ? ver.steps : [], last_status: lastStatus, lastStatus }] };
         }
         const list = [];
         memoryWorkflows.forEach((wf) => {
             const ver = memoryVersions.get(wf.current_version_id);
-            list.push({ ...wf, steps: ver ? ver.steps : [] });
+            const wfRuns = Array.from(memoryRuns.values()).filter((r) => r.workflow_id === wf.id);
+            let lastStatus = 'never_run';
+            if (wfRuns.length > 0) {
+                wfRuns.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
+                const latestStatus = wfRuns[0].status;
+                if (latestStatus === 'completed' || latestStatus === 'success')
+                    lastStatus = 'success';
+                else if (latestStatus === 'failed' || latestStatus === 'timed_out')
+                    lastStatus = 'failed';
+                else if (latestStatus === 'awaiting_approval' || latestStatus === 'awaiting_credentials' || latestStatus === 'pending' || latestStatus === 'running')
+                    lastStatus = 'awaiting_approval';
+                else
+                    lastStatus = 'never_run';
+            }
+            list.push({ ...wf, steps: ver ? ver.steps : [], last_status: lastStatus, lastStatus });
         });
         return { rows: list };
     }
@@ -119,26 +158,28 @@ export async function query(text, params = []) {
         const steps = memoryRunSteps.get(params[0]) || [];
         return { rows: steps };
     }
-    // 9. UPDATE runs SET status = 'running' (approve)
-    if (normalizedSql.includes("status = 'running'")) {
-        const run = memoryRuns.get(params[0]);
+    // 9. UPDATE runs SET status
+    if (normalizedSql.startsWith('update runs set status')) {
+        const [statusVal, runIdVal] = params;
+        const run = memoryRuns.get(runIdVal);
         if (run) {
-            run.status = 'running';
+            run.status = statusVal;
+            if (statusVal === 'completed' || statusVal === 'failed' || statusVal === 'cancelled' || statusVal === 'timed_out') {
+                run.finished_at = new Date().toISOString();
+            }
             memoryRuns.set(run.id, run);
             return { rows: [run] };
         }
         return { rows: [] };
     }
-    // 10. UPDATE runs SET status = 'cancelled' (cancel)
-    if (normalizedSql.includes("status = 'cancelled'")) {
-        const run = memoryRuns.get(params[0]);
-        if (run) {
-            run.status = 'cancelled';
-            run.finished_at = new Date().toISOString();
-            memoryRuns.set(run.id, run);
-            return { rows: [run] };
-        }
-        return { rows: [] };
+    // 10. SELECT FROM runs
+    if (normalizedSql.includes('from runs')) {
+        const runsList = Array.from(memoryRuns.values()).map((r) => {
+            const wf = memoryWorkflows.get(r.workflow_id);
+            return { ...r, workflow_name: wf ? wf.name : r.workflow_id };
+        });
+        runsList.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
+        return { rows: runsList };
     }
     return { rows: [] };
 }
