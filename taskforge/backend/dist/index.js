@@ -247,13 +247,18 @@ fastify.post('/api/workflows/:id/run', async (request, reply) => {
             runId,
         });
         // Execute Playwright runner in background
-        const executorMod = '../../worker/src/executor.js';
+        const prodExecutorPath = path.join(__dirname, './worker/src/executor.js');
+        const executorMod = fs.existsSync(prodExecutorPath) ? './worker/src/executor.js' : '../../worker/src/executor.js';
         import(/* @vite-ignore */ executorMod)
             .then((mod) => {
             if (mod && mod.executeWorkflowRun) {
+                console.log(`[Backend] Triggering executeWorkflowRun for run: ${runId}`);
                 mod.executeWorkflowRun(id, versionId, runId).catch((err) => {
                     fastify.log.error('[Workflow Execution Error]', err);
                 });
+            }
+            else {
+                console.error('[Backend Executor Error] executeWorkflowRun function missing from loaded module:', mod);
             }
         })
             .catch((err) => {
