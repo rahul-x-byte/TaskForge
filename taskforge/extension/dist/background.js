@@ -19,7 +19,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             console.log('[TaskForge Background] Recorded sequence JSON:', JSON.stringify(queue, null, 2));
             await chrome.storage.local.set({ isRecording: false });
             // POST recording sequence to Backend API
-            const backendUrl = message.backendUrl || 'http://localhost:3001/api/recordings';
+            const storage = await chrome.storage.local.get(['backendUrl']);
+            const defaultBackend = 'https://taskforge-bd.onrender.com/api/recordings';
+            const backendUrl = message.backendUrl || storage.backendUrl || defaultBackend;
             try {
                 const response = await fetch(backendUrl, {
                     method: 'POST',
@@ -27,7 +29,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        name: `Recorded Workflow - ${new Date().toISOString()}`,
+                        name: `Recorded Workflow - ${new Date().toLocaleTimeString()}`,
                         steps: queue,
                     }),
                 });
