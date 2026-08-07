@@ -11,14 +11,12 @@
   },
   "dependencies": {
     "@taskforge/shared": "file:../shared",
+    "@types/node": "^20.11.0",
+    "@types/pg": "^8.11.2",
     "bullmq": "^5.7.9",
     "ioredis": "^5.3.2",
     "pg": "^8.11.3",
-    "playwright": "^1.42.1"
-  },
-  "devDependencies": {
-    "@types/node": "^20.11.0",
-    "@types/pg": "^8.11.2",
+    "playwright": "^1.42.1",
     "tsx": "^4.7.1",
     "typescript": "^5.4.0"
   }
