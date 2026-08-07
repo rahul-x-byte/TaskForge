@@ -50,7 +50,8 @@ export const RunStatusPage: React.FC<RunStatusPageProps> = ({ runId, onBack }) =
     loadData();
 
     // Connect to WebSocket endpoint
-    const ws = new WebSocket(`ws://localhost:3001/ws/runs/${runId}`);
+    const wsBase = import.meta.env.VITE_WS_BASE || 'ws://localhost:3001';
+    const ws = new WebSocket(`${wsBase}/ws/runs/${runId}`);
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
