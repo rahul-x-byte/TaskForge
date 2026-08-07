@@ -45,7 +45,11 @@ if (fs.existsSync(frontendDistPath)) {
   });
 }
 
-// Health check endpoint
+// Health check endpoints
+fastify.get('/', async () => {
+  return { status: 'ok', service: 'TaskForge Backend API' };
+});
+
 fastify.get('/health', async () => {
   return { status: 'ok', service: 'backend' };
 });
