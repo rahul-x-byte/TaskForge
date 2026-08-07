@@ -1,7 +1,6 @@
 import playwright from 'playwright';
 import * as path from 'path';
 import * as fs from 'fs';
-
 const { chromium } = playwright;
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:3001';
 const DOWNLOADS_DIR = path.resolve(process.cwd(), 'downloads');
@@ -17,40 +16,55 @@ function getFormattedDate() {
     const day = String(d.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
 }
-// Multi-Strategy Selector Resolver (VideoId -> Role -> TestID -> Text -> CSS)
-// IMPORTANT: locator creation in Playwright never throws - only .click()/.fill() do.
-// So every strategy below must be validated with .count() BEFORE being trusted,
-// otherwise the first strategy that has data always wins even when it's wrong
-// (this was the root cause of "searches YouTube but plays the wrong video").
-async function resolveSelector(page, selectors) {
-    if (!selectors) return page.locator('body').first();
-
+// Multi-Strategy Selector Resolver (VideoID -> Role -> Text -> TestID -> CSS)
+async function resolveSelector(page, selectors, timeoutMs = 300) {
+    if (!selectors)
+        return page.locator('body').first();
     // 1. CSS Selector (fastest & most direct)
     if (selectors.css && selectors.css !== 'body' && selectors.css !== 'html') {
-        const loc = page.locator(selectors.css).first();
-        if (await loc.count().catch(() => 0) > 0) return loc;
+        try {
+            const loc = page.locator(selectors.css);
+            if (await loc.count().catch(() => 0) > 0)
+                return loc.first();
+        }
+        catch (e) { }
     }
-    // 2. Video ID
+    // 2. Video ID strategy
     if (selectors.videoId) {
-        const loc = page.locator(`a[href*="${selectors.videoId}"]`).first();
-        if (await loc.count().catch(() => 0) > 0) return loc;
+        try {
+            const loc = page.locator(`a[href*="${selectors.videoId}"]`);
+            if (await loc.count().catch(() => 0) > 0)
+                return loc.first();
+        }
+        catch (e) { }
     }
     // 3. TestID
     if (selectors.testId) {
-        const loc = page.getByTestId(selectors.testId).first();
-        if (await loc.count().catch(() => 0) > 0) return loc;
+        try {
+            const loc = page.getByTestId(selectors.testId);
+            if (await loc.count().catch(() => 0) > 0)
+                return loc.first();
+        }
+        catch (e) { }
     }
     // 4. Role + Accessible Name
     if (selectors.role && selectors.name) {
-        const loc = page.getByRole(selectors.role, { name: selectors.name });
-        if (await loc.count().catch(() => 0) > 0) return loc.first();
+        try {
+            const loc = page.getByRole(selectors.role, { name: selectors.name });
+            if (await loc.count().catch(() => 0) > 0)
+                return loc.first();
+        }
+        catch (e) { }
     }
     // 5. Visible Text
     if (selectors.text && selectors.text.length < 100) {
-        const loc = page.getByText(selectors.text);
-        if (await loc.count().catch(() => 0) > 0) return loc.first();
+        try {
+            const loc = page.getByText(selectors.text);
+            if (await loc.count().catch(() => 0) > 0)
+                return loc.first();
+        }
+        catch (e) { }
     }
-
     return page.locator(selectors.css || 'body').first();
 }
 // Poll DB/Backend for Approval Gate Resolution (with in-browser navigation auto-approval & 15-minute timeout)
@@ -58,7 +72,7 @@ async function waitForApprovalGate(page, runId, stepIndex, stepDetail, totalStep
     const targetLabel = stepDetail.selectors?.name || stepDetail.selectors?.text || stepDetail.selectors?.css || 'Target element';
     const initialUrl = page && !page.isClosed() ? page.url() : '';
     console.log(`[Approval Gate] Run ${runId} paused at step ${stepIndex + 1}/${totalSteps} (${stepDetail.action} on ${targetLabel}). Awaiting approval...`);
-    // Update status to awaiting_approval
+    // Update status to awaiting_approval with rich context detail
     await fetch(`${BACKEND_URL}/api/runs/${runId}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -106,7 +120,7 @@ async function waitForApprovalGate(page, runId, stepIndex, stepDetail, totalStep
                             status: 'running',
                             detail: { stepIndex, action: stepDetail.action, targetLabel, pageUrl: currentUrl, totalSteps },
                         }),
-                    }).catch(() => {});
+                    }).catch(() => { });
                     return true;
                 }
             }
@@ -124,16 +138,14 @@ async function waitForApprovalGate(page, runId, stepIndex, stepDetail, totalStep
             finishedAt: new Date().toISOString(),
             error: 'Approval gate timed out after 15 minutes',
         }),
-    }).catch(() => {});
+    }).catch(() => { });
     return false;
 }
-
 // Poll DB/Backend for Credential Input Resolution or In-Browser Login & CAPTCHA Navigation (with 15-minute timeout)
 async function waitForCredentialsGate(page, runId, stepIndex, stepDetail) {
     const fieldLabel = stepDetail.selectors?.name || stepDetail.selectors?.css || 'Password';
     const initialUrl = page && !page.isClosed() ? page.url() : '';
     console.log(`[Interactive Login & Credentials Gate] Run ${runId} paused at step ${stepIndex + 1} for login/credentials (${fieldLabel}). Awaiting user input or in-browser login...`);
-
     await fetch(`${BACKEND_URL}/api/runs/${runId}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -146,10 +158,8 @@ async function waitForCredentialsGate(page, runId, stepIndex, stepDetail) {
             },
         }),
     });
-
     const CREDENTIAL_TIMEOUT_MS = 15 * 60 * 1000;
     const startTime = Date.now();
-
     while (Date.now() - startTime < CREDENTIAL_TIMEOUT_MS) {
         await new Promise((resolve) => setTimeout(resolve, 1500));
         try {
@@ -162,7 +172,6 @@ async function waitForCredentialsGate(page, runId, stepIndex, stepDetail) {
                     return credData.credential.value;
                 }
             }
-
             // 2. Check if browser navigated away from initial login URL (in-browser login & CAPTCHA completion)
             if (page && !page.isClosed()) {
                 const currentUrl = page.url();
@@ -172,11 +181,10 @@ async function waitForCredentialsGate(page, runId, stepIndex, stepDetail) {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ status: 'running' }),
-                    }).catch(() => {});
+                    }).catch(() => { });
                     return '[IN_BROWSER_LOGGED_IN]';
                 }
             }
-
             // 3. Check if run was aborted or cancelled
             const runRes = await fetch(`${BACKEND_URL}/api/runs/${runId}`);
             if (runRes.ok) {
@@ -187,11 +195,11 @@ async function waitForCredentialsGate(page, runId, stepIndex, stepDetail) {
                     return null;
                 }
             }
-        } catch (err) {
+        }
+        catch (err) {
             console.warn(`[Credentials Gate Polling Error]`, err);
         }
     }
-
     console.log(`[Credentials Gate Timeout] Run ${runId} timed out after 15 minutes awaiting credentials or login.`);
     await fetch(`${BACKEND_URL}/api/runs/${runId}/status`, {
         method: 'PATCH',
@@ -201,10 +209,9 @@ async function waitForCredentialsGate(page, runId, stepIndex, stepDetail) {
             finishedAt: new Date().toISOString(),
             error: 'Credential entry / login timed out after 15 minutes',
         }),
-    }).catch(() => {});
+    }).catch(() => { });
     return null;
 }
-
 export async function executeWorkflowRun(workflowId, versionId, runId) {
     let browser = null;
     let context = null;
@@ -229,7 +236,8 @@ export async function executeWorkflowRun(workflowId, versionId, runId) {
             body: JSON.stringify({ status: 'running' }),
         });
         // 2. Launch Browser & Tracing
-        browser = await chromium.launch({ headless: false }); // Non-headless so browser is visible
+        const isHeadless = process.env.HEADLESS === 'true' || process.env.NODE_ENV === 'production' || !!process.env.RENDER;
+        browser = await chromium.launch({ headless: isHeadless });
         context = await browser.newContext({ acceptDownloads: true });
         await context.tracing.start({ screenshots: true, snapshots: true });
         page = await context.newPage();
@@ -241,11 +249,11 @@ export async function executeWorkflowRun(workflowId, versionId, runId) {
                 await download.saveAs(destPath);
                 downloadedFilePath = destPath;
                 console.log(`[Executor Global Download Handler] Successfully saved file download to local disk: ${destPath}`);
-            } catch (dErr) {
+            }
+            catch (dErr) {
                 console.error(`[Executor Global Download Error] Failed to save download:`, dErr);
             }
         });
-
         // New Tab & Popup Download / PDF Response Capture
         context.on('page', async (newPage) => {
             newPage.on('download', async (download) => {
@@ -255,9 +263,9 @@ export async function executeWorkflowRun(workflowId, versionId, runId) {
                     await download.saveAs(destPath);
                     downloadedFilePath = destPath;
                     console.log(`[Executor Popup Tab Download] Saved file to disk: ${destPath}`);
-                } catch (e) {}
+                }
+                catch (e) { }
             });
-
             newPage.on('response', async (res) => {
                 try {
                     const ct = res.headers()['content-type'] || '';
@@ -270,17 +278,16 @@ export async function executeWorkflowRun(workflowId, versionId, runId) {
                         downloadedFilePath = destPath;
                         console.log(`[Executor Popup PDF Response] Captured PDF report and saved to disk: ${destPath}`);
                     }
-                } catch (e) {}
+                }
+                catch (e) { }
             });
         });
-
         // 3. Step Execution Loop
         for (let i = 0; i < rawSteps.length; i++) {
             currentStepIndex = i;
             const step = rawSteps[i];
             const targetLabel = step.selectors?.name || step.selectors?.text || step.selectors?.css || 'Target element';
             console.log(`[Executor] Executing Step ${i + 1}/${rawSteps.length}: ${step.action} on ${targetLabel}`, step);
-
             // Broadcast current step progress
             await fetch(`${BACKEND_URL}/api/runs/${runId}/status`, {
                 method: 'PATCH',
@@ -289,13 +296,33 @@ export async function executeWorkflowRun(workflowId, versionId, runId) {
                     status: 'running',
                     detail: { stepIndex: i, action: step.action, targetLabel, pageUrl: step.pageUrl || '', totalSteps: rawSteps.length },
                 }),
-            }).catch(() => {});
-
-            // Check if page needs to navigate to step.pageUrl first
+            }).catch(() => { });
+            // Smart Page Navigation Sync: Navigate if URL path differs and target element isn't visible on current page
             const currentUrl = page.url();
-            if (step.pageUrl && (currentUrl === 'about:blank' || !currentUrl.includes(new URL(step.pageUrl).hostname))) {
-                console.log(`[Executor] Navigating to page URL: ${step.pageUrl}`);
-                await page.goto(step.pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            if (step.pageUrl) {
+                try {
+                    const parsedTarget = new URL(step.pageUrl);
+                    const parsedCurrent = currentUrl !== 'about:blank' ? new URL(currentUrl) : null;
+                    const isDifferentPage = !parsedCurrent ||
+                        parsedCurrent.origin !== parsedTarget.origin ||
+                        parsedCurrent.pathname !== parsedTarget.pathname;
+                    if (isDifferentPage) {
+                        let elementExists = false;
+                        if (step.selectors) {
+                            const testLoc = await resolveSelector(page, step.selectors, 500);
+                            elementExists = await testLoc.isVisible().catch(() => false);
+                        }
+                        if (!elementExists) {
+                            console.log(`[Executor] Navigating to step page: ${step.pageUrl}`);
+                            await page.goto(step.pageUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => { });
+                        }
+                    }
+                }
+                catch (uErr) {
+                    if (currentUrl === 'about:blank') {
+                        await page.goto(step.pageUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => { });
+                    }
+                }
             }
             // Check for Sensitive Step Approval Gate (Strictly explicit sensitivity only, set by user or automatic recording rule)
             const isSensitive = step.isSensitive === true;
@@ -309,14 +336,14 @@ export async function executeWorkflowRun(workflowId, versionId, runId) {
             // Execute Action based on type
             if (step.action === 'navigate') {
                 const targetUrl = step.value || step.pageUrl || 'http://localhost:3001/login';
-                await page.goto(targetUrl, { waitUntil: 'domcontentloaded' });
+                console.log(`[Executor] Navigating explicitly to: ${targetUrl}`);
+                await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
             }
             else if (step.action === 'input' || step.action === 'change') {
-                const locator = await resolveSelector(page, step.selectors);
+                const locator = await resolveSelector(page, step.selectors, 300);
                 await locator.waitFor({ state: 'visible', timeout: 3000 }).catch(() => { });
                 let inputValue = step.value || '';
                 const isPasswordInput = inputValue === '[REDACTED]' || step.selectors?.inputType === 'password';
-
                 if (isPasswordInput) {
                     const userCredential = await waitForCredentialsGate(page, runId, i, step);
                     if (userCredential === null) {
@@ -328,24 +355,24 @@ export async function executeWorkflowRun(workflowId, versionId, runId) {
                     }
                     inputValue = userCredential;
                 }
-
                 try {
                     await locator.fill(inputValue, { timeout: 3000 });
-                } catch (fillErr) {
-                    await locator.click({ force: true }).catch(() => {});
-                    await page.keyboard.type(inputValue).catch(() => {});
+                }
+                catch (fillErr) {
+                    await locator.click({ force: true }).catch(() => { });
+                    await page.keyboard.type(inputValue).catch(() => { });
                 }
                 inputValue = ''; // Immediately clear secret string reference
             }
             else if (step.action === 'click' || step.action === 'submit') {
-                const locator = await resolveSelector(page, step.selectors);
+                const locator = await resolveSelector(page, step.selectors, 300);
                 try {
                     await locator.click({ timeout: 5000 }).catch(() => locator.click({ force: true, timeout: 3000 }));
-                } catch (clickErr) {
+                }
+                catch (clickErr) {
                     console.warn(`[Executor Click Warning] Step ${i + 1}:`, clickErr);
                 }
             }
-
             // Fast pace delay (50ms) for maximum execution speed
             await page.waitForTimeout(50);
         }
@@ -371,42 +398,57 @@ export async function executeWorkflowRun(workflowId, versionId, runId) {
     }
     catch (error) {
         console.error(`[Executor Error] Run ${runId} failed at step ${currentStepIndex + 1}:`, error?.message || error);
-        // Save Screenshot & Playwright Trace on Failure
-        let screenshotUrl = null;
-        let traceUrl = null;
-        if (page && !page.isClosed()) {
-            try {
-                const screenshotPath = path.join(FAILURES_DIR, `${timestamp}.png`);
-                await page.screenshot({ path: screenshotPath, fullPage: true });
-                screenshotUrl = screenshotPath;
-                console.log(`[Executor Failure] Screenshot saved: ${screenshotPath}`);
+        // Check if run was explicitly cancelled before setting status to failed
+        let isCancelled = false;
+        try {
+            const checkRes = await fetch(`${BACKEND_URL}/api/runs/${runId}`);
+            if (checkRes.ok) {
+                const data = await checkRes.json();
+                if (data.run?.status === 'cancelled') {
+                    isCancelled = true;
+                }
             }
-            catch (sErr) { }
         }
-        if (context) {
-            try {
-                const tracePath = path.join(FAILURES_DIR, `${timestamp}.zip`);
-                await context.tracing.stop({ path: tracePath });
-                traceUrl = tracePath;
-                console.log(`[Executor Failure] Trace saved: ${tracePath}`);
+        catch (cErr) { }
+        if (!isCancelled) {
+            // Save Screenshot & Playwright Trace on Failure
+            let screenshotUrl = null;
+            let traceUrl = null;
+            const activePage = page;
+            if (activePage && !activePage.isClosed()) {
+                try {
+                    const screenshotPath = path.join(FAILURES_DIR, `${timestamp}.png`);
+                    await activePage.screenshot({ path: screenshotPath, fullPage: true });
+                    screenshotUrl = screenshotPath;
+                    console.log(`[Executor Failure] Screenshot saved: ${screenshotPath}`);
+                }
+                catch (sErr) { }
             }
-            catch (tErr) { }
+            if (context) {
+                try {
+                    const tracePath = path.join(FAILURES_DIR, `${timestamp}.zip`);
+                    await context.tracing.stop({ path: tracePath });
+                    traceUrl = tracePath;
+                    console.log(`[Executor Failure] Trace saved: ${tracePath}`);
+                }
+                catch (tErr) { }
+            }
+            // Update Status to Failed
+            await fetch(`${BACKEND_URL}/api/runs/${runId}/status`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    status: 'failed',
+                    finishedAt: new Date().toISOString(),
+                    error: error?.message || 'Workflow execution failed',
+                    detail: { screenshotUrl, traceUrl, failedStepIndex: currentStepIndex },
+                }),
+            });
         }
-        // Update Status to Failed
-        await fetch(`${BACKEND_URL}/api/runs/${runId}/status`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                status: 'failed',
-                finishedAt: new Date().toISOString(),
-                error: error?.message || 'Workflow execution failed',
-                detail: { screenshotUrl, traceUrl, failedStepIndex: currentStepIndex },
-            }),
-        });
         return false;
     }
     finally {
+        // Keep browser window open so user can view/interact with the page after completion
         console.log(`[Executor] Execution finished. Browser window remains open.`);
     }
-}
 }

@@ -254,7 +254,8 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
     });
 
     // 2. Launch Browser & Tracing
-    browser = await chromium.launch({ headless: false });
+    const isHeadless = process.env.HEADLESS === 'true' || process.env.NODE_ENV === 'production' || !!process.env.RENDER;
+    browser = await chromium.launch({ headless: isHeadless });
     context = await browser.newContext({ acceptDownloads: true });
     await context.tracing.start({ screenshots: true, snapshots: true });
     page = await context.newPage();

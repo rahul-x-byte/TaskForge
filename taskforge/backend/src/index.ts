@@ -314,6 +314,20 @@ fastify.post('/api/workflows/:id/run', async (request, reply) => {
       runId,
     });
 
+    // Execute Playwright runner in background
+    const executorMod = '../../worker/src/executor.js';
+    import(/* @vite-ignore */ executorMod)
+      .then((mod: any) => {
+        if (mod && mod.executeWorkflowRun) {
+          mod.executeWorkflowRun(id, versionId, runId).catch((err: any) => {
+            fastify.log.error('[Workflow Execution Error]', err);
+          });
+        }
+      })
+      .catch((err: any) => {
+        fastify.log.error('[Dynamic Import Executor Error]', err);
+      });
+
     return reply.status(202).send({
       message: 'Workflow run enqueued and started',
       runId,
