@@ -23,5 +23,3 @@ failures/
 .DS_Store
 Thumbs.db
 
-# Backup folders
-taskforge copy/
