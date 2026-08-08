@@ -24,7 +24,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       // POST recording sequence to Backend API
       const storage = await chrome.storage.local.get(['backendUrl']);
-      const defaultBackend = 'https://taskforge-bd.onrender.com/api/recordings';
+      const defaultBackend = 'http://localhost:3001/api/recordings';
       const backendUrl = message.backendUrl || storage.backendUrl || defaultBackend;
 
       try {
