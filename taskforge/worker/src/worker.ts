@@ -6,22 +6,29 @@ console.log('[Worker] TaskForge Automation Worker Service starting...');
 console.log('[Worker] Listening for workflow execution jobs...');
 
 // Polling Loop for execution jobs from backend
-async function pollForJobs() {
+export async function pollForJobs() {
+  console.log('[Worker] TaskForge Automation Worker Service starting...');
+  console.log('[Worker] Listening for workflow execution jobs...');
+
   while (true) {
     try {
-      // Check for pending runs
-      const res = await fetch(`${BACKEND_URL}/api/workflows`);
+      const res = await fetch(`${BACKEND_URL}/api/runs/pending`);
       if (res.ok) {
-        const workflows = await res.json();
-        for (const wf of workflows) {
-          // Look up runs
-          const wfRes = await fetch(`${BACKEND_URL}/api/workflows/${wf.id}`);
-          if (wfRes.ok) {
-            // Check pending runs
+        const pendingRuns = await res.json();
+        for (const run of pendingRuns) {
+          const claimRes = await fetch(
+            `${BACKEND_URL}/api/runs/${run.id}/claim`,
+            { method: 'POST' }
+          );
+          if (claimRes.ok) {
+            console.log(`[Worker] Claimed run ${run.id}, executing...`);
+            await processJob(run.workflow_id, run.version_id, run.id);
           }
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error('[Worker] Poll error:', e);
+    }
 
     await new Promise((r) => setTimeout(r, 2000));
   }

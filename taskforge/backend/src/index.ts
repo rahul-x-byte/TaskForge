@@ -8,7 +8,6 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { pool } from './db/index.js';
-import { workflowQueue } from './queue/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -307,33 +306,8 @@ fastify.post('/api/workflows/:id/run', async (request, reply) => {
       [runId, id, versionId]
     );
 
-    // Enqueue job in BullMQ for worker service processing
-    await workflowQueue.add('execute-workflow', {
-      workflowId: id,
-      versionId,
-      runId,
-    });
-
-    // Execute Playwright runner in background
-    const prodExecutorPath = path.join(__dirname, './worker/src/executor.js');
-    const executorMod = fs.existsSync(prodExecutorPath) ? './worker/src/executor.js' : '../../worker/src/executor.js';
-    import(/* @vite-ignore */ executorMod)
-      .then((mod: any) => {
-        if (mod && mod.executeWorkflowRun) {
-          console.log(`[Backend] Triggering executeWorkflowRun for run: ${runId}`);
-          mod.executeWorkflowRun(id, versionId, runId).catch((err: any) => {
-            fastify.log.error('[Workflow Execution Error]', err);
-          });
-        } else {
-          console.error('[Backend Executor Error] executeWorkflowRun function missing from loaded module:', mod);
-        }
-      })
-      .catch((err: any) => {
-        fastify.log.error('[Dynamic Import Executor Error]', err);
-      });
-
     return reply.status(202).send({
-      message: 'Workflow run enqueued and started',
+      message: 'Workflow run enqueued',
       runId,
       workflowId: id,
       versionId,
@@ -380,6 +354,47 @@ fastify.get('/api/runs', async (request, reply) => {
   } catch (err: any) {
     fastify.log.error(err);
     return reply.status(500).send({ error: 'Failed to fetch audit log runs', message: err?.message });
+  }
+});
+
+// 6b. GET /api/runs/pending — Returns pending runs ordered by started_at ASC (limit 5)
+fastify.get('/api/runs/pending', async (request, reply) => {
+  try {
+    const res = await pool.query(
+      `SELECT id, workflow_id, version_id, status, started_at FROM runs WHERE status = 'pending' ORDER BY started_at ASC LIMIT 5`
+    );
+    return reply.send(res.rows);
+  } catch (err: any) {
+    fastify.log.error(err);
+    return reply.status(500).send({ error: 'Failed to fetch pending runs', message: err?.message });
+  }
+});
+
+// 6c. POST /api/runs/:id/claim — Atomically claim a pending run job for worker execution
+fastify.post('/api/runs/:id/claim', async (request, reply) => {
+  const { id } = request.params as { id: string };
+  try {
+    const res = await pool.query(
+      `UPDATE runs SET status = 'claimed' WHERE id = $1 AND status = 'pending' RETURNING *`,
+      [id]
+    );
+
+    if (res.rows.length === 0) {
+      return reply.status(409).send({ error: 'Run already claimed or not pending' });
+    }
+
+    const run = res.rows[0];
+    broadcastRunUpdate(id, {
+      type: 'STATUS_UPDATE',
+      runId: id,
+      status: 'claimed',
+      timestamp: Date.now(),
+    });
+
+    return reply.send(run);
+  } catch (err: any) {
+    fastify.log.error(err);
+    return reply.status(500).send({ error: 'Failed to claim run', message: err?.message });
   }
 });
 

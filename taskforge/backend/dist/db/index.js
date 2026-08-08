@@ -160,6 +160,16 @@ export async function query(text, params = []) {
     }
     // 9. UPDATE runs SET status
     if (normalizedSql.startsWith('update runs set status')) {
+        if (normalizedSql.includes("status = 'pending'") && normalizedSql.includes('where id =')) {
+            const runIdVal = params[0];
+            const run = memoryRuns.get(runIdVal);
+            if (run && run.status === 'pending') {
+                run.status = 'claimed';
+                memoryRuns.set(run.id, run);
+                return { rows: [run] };
+            }
+            return { rows: [] };
+        }
         const [statusVal, runIdVal] = params;
         const run = memoryRuns.get(runIdVal);
         if (run) {
@@ -174,6 +184,14 @@ export async function query(text, params = []) {
     }
     // 10. SELECT FROM runs
     if (normalizedSql.includes('from runs')) {
+        if (normalizedSql.includes("status = 'pending'")) {
+            const pendingList = Array.from(memoryRuns.values())
+                .filter((r) => r.status === 'pending')
+                .sort((a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime());
+            const limitMatch = normalizedSql.match(/limit\s+(\d+)/);
+            const limit = limitMatch ? parseInt(limitMatch[1], 10) : 5;
+            return { rows: pendingList.slice(0, limit) };
+        }
         const runsList = Array.from(memoryRuns.values()).map((r) => {
             const wf = memoryWorkflows.get(r.workflow_id);
             return { ...r, workflow_name: wf ? wf.name : r.workflow_id };
