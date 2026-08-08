@@ -14,62 +14,6 @@ taskforge/
 └── shared/              # Shared TypeScript types and interfaces
 ```
 
-## Quick Start
-
-### 1. Infrastructure (Postgres & Redis)
-
-Start database and cache services using Docker Compose:
-
-```bash
-docker compose up -d
-```
-
-- **Postgres 16**: `localhost:5432` (User: `taskforge`, Pass: `taskforge_password`, DB: `taskforge`)
-- **Redis 7**: `localhost:6379`
-
-### 2. Install Dependencies
-
-In each package directory, run `npm install`:
-
-```bash
-# Shared types
-cd shared && npm install && npm run build && cd ..
-
-# Backend
-cd backend && npm install && cd ..
-
-# Worker
-cd worker && npm install && cd ..
-
-# Frontend
-cd frontend && npm install && cd ..
-
-# Extension
-cd extension && npm install && cd ..
-```
-
-### 3. Run Development Servers
-
-- **Backend API**:
-  ```bash
-  cd backend && npm run dev
-  ```
-  Runs Fastify on `http://localhost:3001` (Health check at `/health`).
-
-- **Worker Service**:
-  ```bash
-  cd worker && npm run dev
-  ```
-  Runs the Playwright task execution worker.
-
-- **Frontend App**:
-  ```bash
-  cd frontend && npm run dev
-  ```
-  Runs Vite dev server at `http://localhost:5173`.
-
----
-
 ## Production Deployment Architecture
 
 TaskForge requires **THREE separate services** to function in production:
@@ -91,11 +35,11 @@ TaskForge requires **THREE separate services** to function in production:
 
 ### Deploying via Render Blueprint (`render.yaml`)
 
-The repository includes a ready-to-use `render.yaml` Blueprint definition:
+The repository includes a ready-to-use `render.yaml` Blueprint definition at the repo root:
 1. In Render, select **New → Blueprint** and select your repository.
-2. Render will automatically provision:
+2. Render will automatically read `render.yaml` and provision:
    - Postgres Database (`taskforge-db`)
    - Redis Instance (`taskforge-redis`)
    - Backend Web Service (`taskforge-backend`)
    - Worker Background Service (`taskforge-worker`)
-3. Set `FRONTEND_URL` on `taskforge-backend` to your Vercel URL.
+3. Set `FRONTEND_URL` on `taskforge-backend` to your Vercel URL (e.g. `https://task-forge-phi-six.vercel.app`).

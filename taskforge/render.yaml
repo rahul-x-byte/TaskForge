@@ -1,0 +1,63 @@
+databases:
+  - name: taskforge-db
+    plan: free
+    databaseName: taskforge
+    user: taskforge
+
+services:
+  # Redis (Key Value store on Render)
+  - type: redis
+    name: taskforge-redis
+    plan: free
+    ipAllowList: []
+
+  # Backend API — public web service
+  - type: web
+    name: taskforge-backend
+    runtime: node
+    plan: free
+    rootDir: taskforge/backend
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: taskforge-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: taskforge-redis
+          type: redis
+          property: connectionString
+      - key: FRONTEND_URL
+        sync: false   # set this to your Vercel URL, e.g. https://task-forge-phi-six.vercel.app
+      - key: NODE_ENV
+        value: production
+
+  # Worker — MUST be "worker" type, not "web", so it stays alive with no HTTP port
+  - type: worker
+    name: taskforge-worker
+    runtime: node
+    plan: starter   # free tier often lacks the memory/CPU headless Chromium needs
+    rootDir: taskforge/worker
+    buildCommand: npm install && npm run build && npx playwright install --with-deps chromium
+    startCommand: node dist/index.js
+    envVars:
+      - key: BACKEND_URL
+        fromService:
+          name: taskforge-backend
+          type: web
+          property: hostPort
+      - key: DATABASE_URL
+        fromDatabase:
+          name: taskforge-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: taskforge-redis
+          type: redis
+          property: connectionString
+      - key: HEADLESS
+        value: "true"
+      - key: NODE_ENV
+        value: production
