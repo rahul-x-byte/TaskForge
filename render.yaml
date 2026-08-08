@@ -38,7 +38,7 @@ services:
   - type: worker
     name: taskforge-worker
     runtime: node
-    plan: starter   # free tier often lacks the memory/CPU headless Chromium needs
+    plan: free
     rootDir: taskforge/worker
     buildCommand: npm install && npm run build && npx playwright install --with-deps chromium
     startCommand: node dist/index.js
