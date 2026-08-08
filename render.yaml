@@ -34,8 +34,8 @@ services:
       - key: NODE_ENV
         value: production
 
-  # Worker — MUST be "worker" type, not "web", so it stays alive with no HTTP port
-  - type: worker
+  # Worker — Web service type with HTTP health server for 100% FREE plan
+  - type: web
     name: taskforge-worker
     runtime: node
     plan: free
