@@ -1,5 +1,6 @@
 import React from 'react';
 import { Layers, Server, Clock } from 'lucide-react';
+import { API_BASE } from '../api';
 
 interface NavbarProps {
   activeTab: 'workflows' | 'audit' | 'detail' | 'run';
@@ -7,6 +8,8 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
+  const isProductionBackend = API_BASE.includes('onrender.com');
+  const serverLabel = isProductionBackend ? 'Backend Ready (Render)' : 'Backend Ready (Port 3001)';
   return (
     <header className="glass-panel" style={{ margin: '1rem 1.5rem', padding: '0.85rem 1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -62,7 +65,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
       </nav>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem', color: '#34d399', background: 'rgba(52, 211, 153, 0.1)', padding: '0.35rem 0.75rem', borderRadius: '9999px' }}>
-        <Server size={14} /> Backend Ready (Port 3001)
+        <Server size={14} /> {serverLabel}
       </div>
     </header>
   );

@@ -1,4 +1,14 @@
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3001/api';
+const getApiBase = () => {
+  if (import.meta.env.VITE_API_BASE) {
+    return import.meta.env.VITE_API_BASE;
+  }
+  if (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')) {
+    return 'https://taskforge-backend-ta41.onrender.com/api';
+  }
+  return 'http://localhost:3001/api';
+};
+
+export const API_BASE = getApiBase();
 
 export interface WorkflowItem {
   id: string;
