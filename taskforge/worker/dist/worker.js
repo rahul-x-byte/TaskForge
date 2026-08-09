@@ -1,6 +1,8 @@
 import { executeWorkflowRun } from './executor.js';
-const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:3001';
+import { resolveBackendUrl } from './config.js';
+const BACKEND_URL = resolveBackendUrl();
 console.log('[Worker] TaskForge Automation Worker Service starting...');
+console.log(`[Worker] Using BACKEND_URL: ${BACKEND_URL}`);
 console.log('[Worker] Listening for workflow execution jobs...');
 // Polling Loop for execution jobs from backend
 export async function pollForJobs() {
