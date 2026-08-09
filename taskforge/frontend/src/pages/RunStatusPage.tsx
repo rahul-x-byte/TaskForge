@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { approveRunGate, cancelRunGate, fetchRunById, fetchWorkflowById, RunItem, WorkflowItem } from '../api';
+import { approveRunGate, cancelRunGate, fetchRunById, fetchWorkflowById, getWsBase, RunItem, WorkflowItem } from '../api';
 import { ArrowLeft, CheckCircle2, AlertTriangle, ShieldAlert, XCircle, KeyRound, Clock, FileText, Eye, Download } from 'lucide-react';
 
 interface RunStatusPageProps {
@@ -49,9 +49,8 @@ export const RunStatusPage: React.FC<RunStatusPageProps> = ({ runId, onBack }) =
   useEffect(() => {
     loadData();
 
-    // Connect to WebSocket endpoint
-    const wsBase = import.meta.env.VITE_WS_BASE || 'ws://localhost:3001';
-    const ws = new WebSocket(`${wsBase}/ws/runs/${runId}`);
+    // Connect to WebSocket endpoint using derived WS base URL
+    const ws = new WebSocket(`${getWsBase()}/ws/runs/${runId}`);
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);

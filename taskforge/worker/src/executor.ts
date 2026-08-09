@@ -1,6 +1,7 @@
 import playwright, { type Browser, type BrowserContext, type Page, type Locator } from 'playwright';
 import * as path from 'path';
 import * as fs from 'fs';
+import { readFile } from 'fs/promises';
 import { SelectorBundle, RecordedAction } from '@taskforge/shared';
 
 const { chromium } = playwright;
@@ -12,6 +13,30 @@ const FAILURES_DIR = path.resolve(process.cwd(), 'failures');
 
 if (!fs.existsSync(DOWNLOADS_DIR)) fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
 if (!fs.existsSync(FAILURES_DIR)) fs.mkdirSync(FAILURES_DIR, { recursive: true });
+
+async function uploadResultFileToBackend(runId: string, filePath: string) {
+  if (!filePath || !fs.existsSync(filePath)) return;
+  try {
+    const fileBuffer = await readFile(filePath);
+    const filename = path.basename(filePath);
+    console.log(`[Executor] Uploading downloaded result file ${filename} for run ${runId} to backend...`);
+    const res = await fetch(`${BACKEND_URL}/api/runs/${runId}/upload-result`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-Filename': filename,
+      },
+      body: fileBuffer,
+    });
+    if (res.ok) {
+      console.log(`[Executor] Successfully uploaded result file ${filename} to backend for run ${runId}`);
+    } else {
+      console.warn(`[Executor Upload Warning] Backend returned HTTP status ${res.status} for file upload`);
+    }
+  } catch (err) {
+    console.error(`[Executor Upload Error] Failed to upload result file to backend:`, err);
+  }
+}
 
 function getFormattedDate(): string {
   const d = new Date();
@@ -269,6 +294,7 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
         await download.saveAs(destPath);
         downloadedFilePath = destPath;
         console.log(`[Executor Global Download Handler] Successfully saved file download to local disk: ${destPath}`);
+        await uploadResultFileToBackend(runId, destPath);
       } catch (dErr) {
         console.error(`[Executor Global Download Error] Failed to save download:`, dErr);
       }
@@ -283,6 +309,7 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
           await download.saveAs(destPath);
           downloadedFilePath = destPath;
           console.log(`[Executor Popup Tab Download] Saved file to disk: ${destPath}`);
+          await uploadResultFileToBackend(runId, destPath);
         } catch (e) {}
       });
 
@@ -297,6 +324,7 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
             fs.writeFileSync(destPath, buffer);
             downloadedFilePath = destPath;
             console.log(`[Executor Popup PDF Response] Captured PDF report and saved to disk: ${destPath}`);
+            await uploadResultFileToBackend(runId, destPath);
           }
         } catch (e) {}
       });
@@ -405,6 +433,10 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
 
     // Stop Tracing on Success
     await context.tracing.stop();
+
+    if (downloadedFilePath) {
+      await uploadResultFileToBackend(runId, downloadedFilePath);
+    }
 
     // Mark Run Completed
     await fetch(`${BACKEND_URL}/api/runs/${runId}/status`, {

@@ -9,6 +9,7 @@ export interface Workflow {
   stepCount: number;
   schedule?: string;
   lastStatus?: 'success' | 'failed' | 'awaiting_approval' | 'never_run';
+  latestRunId?: string;
 }
 
 function statusMeta(status?: Workflow['lastStatus']) {
@@ -26,12 +27,14 @@ export default function WorkflowDashboard({
   onUseTemplate,
   onSelectWorkflow,
   onRunWorkflow,
+  onOpenRunStatus,
 }: {
   workflows: Workflow[];
   onUseTemplate?: (templateId: string) => void;
   onRecordNew?: () => void;
   onSelectWorkflow?: (workflowId: string) => void;
   onRunWorkflow?: (workflowId: string, e: React.MouseEvent) => void;
+  onOpenRunStatus?: (runId: string) => void;
 }) {
   const hasWorkflows = workflows.length > 0;
 
@@ -88,25 +91,45 @@ export default function WorkflowDashboard({
                 key={wf.id}
                 className="tf-workflow-card"
                 style={{ cursor: onSelectWorkflow ? 'pointer' : 'default' }}
-                onClick={() => onSelectWorkflow?.(wf.id)}
+                onClick={() => {
+                  if (wf.lastStatus === 'awaiting_approval' && wf.latestRunId && onOpenRunStatus) {
+                    onOpenRunStatus(wf.latestRunId);
+                  } else {
+                    onSelectWorkflow?.(wf.id);
+                  }
+                }}
               >
                 <div className="tf-workflow-card-top">
                   <span className="tf-workflow-name">{wf.name}</span>
-                  <span className={`tf-badge ${meta.className}`}>{meta.label}</span>
+                  <span
+                    className={`tf-badge ${meta.className}`}
+                    style={{ cursor: wf.latestRunId && onOpenRunStatus ? 'pointer' : 'default' }}
+                    onClick={(e) => {
+                      if (wf.latestRunId && onOpenRunStatus) {
+                        e.stopPropagation();
+                        onOpenRunStatus(wf.latestRunId);
+                      }
+                    }}
+                    title={wf.latestRunId ? "Click to view run details & approval" : undefined}
+                  >
+                    {meta.label}
+                  </span>
                 </div>
                 <p className="tf-subtle">{wf.stepCount} steps{wf.schedule ? ` · ${wf.schedule}` : ' · manual trigger'}</p>
                 <button
                   className="tf-btn-secondary"
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (onRunWorkflow) {
+                    if (wf.lastStatus === 'awaiting_approval' && wf.latestRunId && onOpenRunStatus) {
+                      onOpenRunStatus(wf.latestRunId);
+                    } else if (onRunWorkflow) {
                       onRunWorkflow(wf.id, e);
                     } else if (onSelectWorkflow) {
                       onSelectWorkflow(wf.id);
                     }
                   }}
                 >
-                  Run now
+                  {wf.lastStatus === 'awaiting_approval' ? 'Review & Approve' : 'Run now'}
                 </button>
               </div>
             );

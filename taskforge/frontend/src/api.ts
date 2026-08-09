@@ -10,6 +10,12 @@ const getApiBase = () => {
 
 export const API_BASE = getApiBase();
 
+export const getWsBase = () => {
+  if (import.meta.env.VITE_WS_BASE) return import.meta.env.VITE_WS_BASE;
+  const httpBase = API_BASE.replace(/\/api\/?$/, '');
+  return httpBase.replace(/^http/, 'ws'); // http->ws, https->wss automatically
+};
+
 export interface WorkflowItem {
   id: string;
   name: string;
@@ -17,6 +23,7 @@ export interface WorkflowItem {
   current_version_id?: string;
   steps?: any[];
   lastStatus?: 'success' | 'failed' | 'awaiting_approval' | 'never_run';
+  latestRunId?: string;
   schedule?: {
     frequency: string;
     time?: string;

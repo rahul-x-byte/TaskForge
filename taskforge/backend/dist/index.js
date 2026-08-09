@@ -23,6 +23,13 @@ await fastify.register(fastifyCors, {
 });
 await fastify.register(fastifyWebsocket);
 await fastify.register(fastifyFormbody);
+// Register binary buffer parser for worker file uploads
+fastify.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (req, body, done) => {
+    done(null, body);
+});
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
+if (!fs.existsSync(UPLOADS_DIR))
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 // Serve Frontend Static Bundle if built
 const frontendDistPath = path.join(__dirname, '../../frontend/dist');
 if (fs.existsSync(frontendDistPath)) {
@@ -464,6 +471,35 @@ fastify.post('/api/runs/:id/cancel', async (request, reply) => {
         return reply.status(500).send({ error: 'Failed to cancel run', message: err?.message });
     }
 });
+// 10b. POST /api/runs/:id/upload-result — Save uploaded binary file from worker
+fastify.post('/api/runs/:id/upload-result', async (request, reply) => {
+    const { id } = request.params;
+    const rawHeaderFilename = request.headers['x-filename'];
+    const filename = rawHeaderFilename ? path.basename(rawHeaderFilename) : `download_${id}_${Date.now()}.bin`;
+    const fileBuffer = request.body;
+    if (!Buffer.isBuffer(fileBuffer)) {
+        return reply.status(400).send({ error: 'Invalid or missing binary file buffer' });
+    }
+    const destPath = path.join(UPLOADS_DIR, filename);
+    fs.writeFileSync(destPath, fileBuffer);
+    console.log(`[Backend Upload Endpoint] Saved uploaded result file for run ${id}: ${destPath}`);
+    const runRes = await pool.query(`SELECT * FROM runs WHERE id = $1`, [id]);
+    const existingRun = runRes.rows[0] || {};
+    const detail = existingRun.detail || {};
+    detail.downloadedFilePath = destPath;
+    detail.downloadFilename = filename;
+    detail.downloadUrl = `/api/runs/${id}/download`;
+    detail.previewUrl = `/api/runs/${id}/preview`;
+    await pool.query(`UPDATE runs SET status = status WHERE id = $1 RETURNING *`, [id]);
+    broadcastRunUpdate(id, {
+        type: 'STATUS_UPDATE',
+        runId: id,
+        status: existingRun.status || 'completed',
+        detail,
+        timestamp: Date.now(),
+    });
+    return reply.send({ message: 'Result file uploaded successfully', filename, destPath });
+});
 // 11. GET /api/runs/:id/download — Download resulting report file directly to browser
 fastify.get('/api/runs/:id/download', async (request, reply) => {
     const { id } = request.params;
@@ -471,6 +507,26 @@ fastify.get('/api/runs/:id/download', async (request, reply) => {
         const res = await pool.query(`SELECT * FROM runs WHERE id = $1`, [id]);
         const run = res.rows[0];
         let filePath = run?.detail?.downloadedFilePath;
+        if (!filePath || !fs.existsSync(filePath)) {
+            if (run?.detail?.downloadFilename) {
+                const potentialUploadPath = path.join(UPLOADS_DIR, run.detail.downloadFilename);
+                if (fs.existsSync(potentialUploadPath))
+                    filePath = potentialUploadPath;
+            }
+        }
+        if (!filePath || !fs.existsSync(filePath)) {
+            if (fs.existsSync(UPLOADS_DIR)) {
+                const files = fs.readdirSync(UPLOADS_DIR).map((f) => ({
+                    name: f,
+                    path: path.join(UPLOADS_DIR, f),
+                    time: fs.statSync(path.join(UPLOADS_DIR, f)).mtimeMs,
+                }));
+                files.sort((a, b) => b.time - a.time);
+                if (files.length > 0) {
+                    filePath = files[0].path;
+                }
+            }
+        }
         if (!filePath || !fs.existsSync(filePath)) {
             const downloadsDir = path.join(process.cwd(), '../worker/downloads');
             if (fs.existsSync(downloadsDir)) {
@@ -514,6 +570,26 @@ fastify.get('/api/runs/:id/preview', async (request, reply) => {
         const res = await pool.query(`SELECT * FROM runs WHERE id = $1`, [id]);
         const run = res.rows[0];
         let filePath = run?.detail?.downloadedFilePath;
+        if (!filePath || !fs.existsSync(filePath)) {
+            if (run?.detail?.downloadFilename) {
+                const potentialUploadPath = path.join(UPLOADS_DIR, run.detail.downloadFilename);
+                if (fs.existsSync(potentialUploadPath))
+                    filePath = potentialUploadPath;
+            }
+        }
+        if (!filePath || !fs.existsSync(filePath)) {
+            if (fs.existsSync(UPLOADS_DIR)) {
+                const files = fs.readdirSync(UPLOADS_DIR).map((f) => ({
+                    name: f,
+                    path: path.join(UPLOADS_DIR, f),
+                    time: fs.statSync(path.join(UPLOADS_DIR, f)).mtimeMs,
+                }));
+                files.sort((a, b) => b.time - a.time);
+                if (files.length > 0) {
+                    filePath = files[0].path;
+                }
+            }
+        }
         if (!filePath || !fs.existsSync(filePath)) {
             const downloadsDir = path.join(process.cwd(), '../worker/downloads');
             if (fs.existsSync(downloadsDir)) {

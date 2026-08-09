@@ -85,6 +85,7 @@ export default function App() {
       stepCount: wf.steps?.length || 0,
       schedule: wf.schedule ? `${wf.schedule.frequency}${wf.schedule.time ? ` (${wf.schedule.time})` : ''}` : undefined,
       lastStatus,
+      latestRunId: wf.latestRunId,
     };
   });
 
@@ -112,6 +113,10 @@ export default function App() {
               onUseTemplate={handleUseTemplate}
               onSelectWorkflow={handleSelectWorkflow}
               onRunWorkflow={handleRunWorkflow}
+              onOpenRunStatus={(runId) => {
+                setSelectedRunId(runId);
+                setActiveTab('run');
+              }}
             />
           )
         )}

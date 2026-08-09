@@ -110,15 +110,17 @@ export async function query(text: string, params: any[] = []): Promise<{ rows: a
       const ver = memoryVersions.get(wf.current_version_id);
       const wfRuns = Array.from(memoryRuns.values()).filter((r) => r.workflow_id === wf.id);
       let lastStatus = 'never_run';
+      let latestRunId: string | null = null;
       if (wfRuns.length > 0) {
         wfRuns.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
+        latestRunId = wfRuns[0].id;
         const latestStatus = wfRuns[0].status;
         if (latestStatus === 'completed' || latestStatus === 'success') lastStatus = 'success';
         else if (latestStatus === 'failed' || latestStatus === 'timed_out') lastStatus = 'failed';
         else if (latestStatus === 'awaiting_approval' || latestStatus === 'awaiting_credentials' || latestStatus === 'pending' || latestStatus === 'running') lastStatus = 'awaiting_approval';
         else lastStatus = 'never_run';
       }
-      return { rows: [{ ...wf, steps: ver ? ver.steps : [], last_status: lastStatus, lastStatus }] };
+      return { rows: [{ ...wf, steps: ver ? ver.steps : [], last_status: lastStatus, lastStatus, latest_run_id: latestRunId, latestRunId }] };
     }
 
     const list: any[] = [];
@@ -126,15 +128,17 @@ export async function query(text: string, params: any[] = []): Promise<{ rows: a
       const ver = memoryVersions.get(wf.current_version_id);
       const wfRuns = Array.from(memoryRuns.values()).filter((r) => r.workflow_id === wf.id);
       let lastStatus = 'never_run';
+      let latestRunId: string | null = null;
       if (wfRuns.length > 0) {
         wfRuns.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
+        latestRunId = wfRuns[0].id;
         const latestStatus = wfRuns[0].status;
         if (latestStatus === 'completed' || latestStatus === 'success') lastStatus = 'success';
         else if (latestStatus === 'failed' || latestStatus === 'timed_out') lastStatus = 'failed';
         else if (latestStatus === 'awaiting_approval' || latestStatus === 'awaiting_credentials' || latestStatus === 'pending' || latestStatus === 'running') lastStatus = 'awaiting_approval';
         else lastStatus = 'never_run';
       }
-      list.push({ ...wf, steps: ver ? ver.steps : [], last_status: lastStatus, lastStatus });
+      list.push({ ...wf, steps: ver ? ver.steps : [], last_status: lastStatus, lastStatus, latest_run_id: latestRunId, latestRunId });
     });
     return { rows: list };
   }
