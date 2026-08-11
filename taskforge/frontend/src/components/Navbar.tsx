@@ -1,6 +1,6 @@
 import React from 'react';
-import { Layers, Server, Clock } from 'lucide-react';
-import { API_BASE } from '../api';
+import { Layers, Server, Clock, Settings } from 'lucide-react';
+import { API_BASE, setApiBase } from '../api';
 
 interface NavbarProps {
   activeTab: 'workflows' | 'audit' | 'detail' | 'run';
@@ -9,7 +9,18 @@ interface NavbarProps {
 
 export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
   const isProductionBackend = API_BASE.includes('onrender.com');
-  const serverLabel = isProductionBackend ? 'Backend Ready (Render)' : 'Backend Ready (Port 3001)';
+  const serverLabel = isProductionBackend ? 'Backend Connected' : 'Backend Connected (Local)';
+
+  const handleConfigureBackend = () => {
+    const input = window.prompt(
+      'Enter your active Render Backend API URL (e.g. https://taskforge-backend-xxxx.onrender.com/api):',
+      API_BASE
+    );
+    if (input && input.trim()) {
+      setApiBase(input.trim());
+    }
+  };
+
   return (
     <header className="glass-panel" style={{ margin: '1rem 1.5rem', padding: '0.85rem 1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -64,8 +75,23 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
         </button>
       </nav>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem', color: '#34d399', background: 'rgba(52, 211, 153, 0.1)', padding: '0.35rem 0.75rem', borderRadius: '9999px' }}>
-        <Server size={14} /> {serverLabel}
+      <div
+        onClick={handleConfigureBackend}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.5rem',
+          fontSize: '0.8rem',
+          color: '#34d399',
+          background: 'rgba(52, 211, 153, 0.1)',
+          padding: '0.35rem 0.75rem',
+          borderRadius: '9999px',
+          cursor: 'pointer',
+          border: '1px solid rgba(52, 211, 153, 0.2)',
+        }}
+        title={`Connected API: ${API_BASE} (Click to change backend URL)`}
+      >
+        <Server size={14} /> {serverLabel} <Settings size={12} style={{ opacity: 0.7 }} />
       </div>
     </header>
   );

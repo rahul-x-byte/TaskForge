@@ -1,14 +1,30 @@
-const getApiBase = () => {
-  if (import.meta.env.VITE_API_BASE) {
-    return import.meta.env.VITE_API_BASE;
+export const getApiBase = () => {
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('taskforge_api_base');
+    if (saved && saved.trim()) {
+      let cleaned = saved.trim().replace(/\/+$/, '');
+      if (!cleaned.endsWith('/api')) cleaned = `${cleaned}/api`;
+      return cleaned;
+    }
   }
-  if (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')) {
-    return 'https://taskforge-backend-ta41.onrender.com/api';
+  if (import.meta.env.VITE_API_BASE) {
+    let envBase = import.meta.env.VITE_API_BASE.trim().replace(/\/+$/, '');
+    if (!envBase.endsWith('/api')) envBase = `${envBase}/api`;
+    return envBase;
   }
   return 'http://localhost:3001/api';
 };
 
 export const API_BASE = getApiBase();
+
+export const setApiBase = (url: string) => {
+  if (typeof window !== 'undefined') {
+    let cleaned = url.trim().replace(/\/+$/, '');
+    if (!cleaned.endsWith('/api')) cleaned = `${cleaned}/api`;
+    localStorage.setItem('taskforge_api_base', cleaned);
+    window.location.reload();
+  }
+};
 
 export const getWsBase = () => {
   if (import.meta.env.VITE_WS_BASE) return import.meta.env.VITE_WS_BASE;
