@@ -75,6 +75,11 @@
       <div id="status-badge" class="badge">Idle</div>
       <button id="toggle-btn" class="btn-start">Start Recording</button>
       <div id="action-count" class="count">0 actions recorded</div>
+      <div style="width: 100%; text-align: left; margin-top: 4px;">
+        <label style="font-size: 0.7rem; color: #94a3b8; display: block; margin-bottom: 4px; font-weight: 600;">Backend API Endpoint</label>
+        <input id="backend-url-input" type="text" style="width: 100%; box-sizing: border-box; background: #1e293b; border: 1px solid #334155; color: #38bdf8; padding: 6px 8px; border-radius: 4px; font-size: 0.72rem; font-family: monospace;" placeholder="https://taskforge-backend-ta41.onrender.com/api/recordings" />
+      </div>
+      <div id="sync-msg" style="font-size: 0.72rem; color: #34d399; display: none; text-align: center;"></div>
     </div>
     <script type="module" src="dist/popup.js"></script>
   </body>

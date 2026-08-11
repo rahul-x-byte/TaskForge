@@ -63,6 +63,23 @@ function extractSelectors(el) {
         inputType: inputType || undefined,
     };
 }
+// Check if form contains sensitive input fields (passwords or currency/payment data)
+function formContainsSensitiveInput(formEl) {
+    try {
+        const inputs = Array.from(formEl.querySelectorAll('input, select, textarea'));
+        return inputs.some((input) => {
+            if (input instanceof HTMLInputElement && input.type.toLowerCase() === 'password') {
+                return true;
+            }
+            const attrString = `${input.getAttribute('name') || ''} ${input.id} ${input.getAttribute('autocomplete') || ''} ${input.getAttribute('placeholder') || ''}`.toLowerCase();
+            const sensitiveKeywords = ['card', 'cvv', 'cvc', 'pay', 'price', 'amount', 'credit', 'billing'];
+            return sensitiveKeywords.some((keyword) => attrString.includes(keyword));
+        });
+    }
+    catch (e) {
+        return false;
+    }
+}
 // Save recorded action to chrome.storage.local
 async function recordAction(action) {
     try {
@@ -70,6 +87,17 @@ async function recordAction(action) {
         if (!data.isRecording)
             return;
         const queue = data.recordingQueue || [];
+        // De-duplicate rapid input typing into the same element
+        if (action.action === 'input' && queue.length > 0) {
+            const last = queue[queue.length - 1];
+            if (last.action === 'input' && last.selectors.css === action.selectors.css) {
+                last.value = action.value;
+                last.timestamp = action.timestamp;
+                await chrome.storage.local.set({ recordingQueue: queue });
+                console.log('[TaskForge Recorder] Updated input value:', action.value);
+                return;
+            }
+        }
         queue.push(action);
         await chrome.storage.local.set({ recordingQueue: queue });
         console.log('[TaskForge Recorder] Action recorded:', action);
@@ -126,29 +154,8 @@ function setupRecordingListeners() {
         }
     };
     document.addEventListener('change', handleInputEvent, true);
-    document.addEventListener('input', (e) => {
-        // Debounce or record on blur/change to avoid high frequency, but record input
-        if (e.target instanceof HTMLInputElement && isPasswordField(e.target)) {
-            handleInputEvent(e);
-        }
-    }, true);
-    // Check if form contains sensitive input fields (passwords or currency/payment data)
-    function formContainsSensitiveInput(formEl) {
-        try {
-            const inputs = Array.from(formEl.querySelectorAll('input, select, textarea'));
-            return inputs.some((input) => {
-                if (input instanceof HTMLInputElement && input.type.toLowerCase() === 'password') {
-                    return true;
-                }
-                const attrString = `${input.getAttribute('name') || ''} ${input.id} ${input.getAttribute('autocomplete') || ''} ${input.getAttribute('placeholder') || ''}`.toLowerCase();
-                const sensitiveKeywords = ['card', 'cvv', 'cvc', 'pay', 'price', 'amount', 'credit', 'billing'];
-                return sensitiveKeywords.some((keyword) => attrString.includes(keyword));
-            });
-        }
-        catch (e) {
-            return false;
-        }
-    }
+    document.addEventListener('input', handleInputEvent, true);
+    document.addEventListener('blur', handleInputEvent, true);
     // Form Submit Listener
     document.addEventListener('submit', (e) => {
         const target = e.target;
