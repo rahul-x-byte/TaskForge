@@ -59,7 +59,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                         else {
                             syncMsg.style.color = '#f87171';
-                            syncMsg.textContent = 'Saved locally (backend unreachable).';
+                            syncMsg.textContent = stopRes?.error ? `Error: ${stopRes.error}` : 'Saved locally (backend unreachable).';
                         }
                     }
                 });

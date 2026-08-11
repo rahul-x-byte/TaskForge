@@ -5,6 +5,23 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({ isRecording: false, recordingQueue: [] });
 });
 
+function normalizeRecordingsUrl(urlStr: string): string {
+  let cleaned = (urlStr || '').trim();
+  if (!cleaned) return 'https://taskforge-backend-ta41.onrender.com/api/recordings';
+  if (!/^https?:\/\//i.test(cleaned)) {
+    cleaned = `https://${cleaned}`;
+  }
+  cleaned = cleaned.replace(/\/+$/, '');
+  
+  if (cleaned.endsWith('/api/recordings') || cleaned.endsWith('/recordings')) {
+    return cleaned;
+  }
+  if (cleaned.endsWith('/api')) {
+    return `${cleaned}/recordings`;
+  }
+  return `${cleaned}/api/recordings`;
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'START_RECORDING') {
     chrome.storage.local.set({ isRecording: true, recordingQueue: [] }, () => {
@@ -24,8 +41,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       // POST recording sequence to Backend API
       const storage = await chrome.storage.local.get(['backendUrl']);
-      const defaultBackend = 'https://taskforge-backend-ta41.onrender.com/api/recordings';
-      const backendUrl = message.backendUrl || storage.backendUrl || defaultBackend;
+      const rawBackend = message.backendUrl || storage.backendUrl || 'https://taskforge-backend-ta41.onrender.com/api/recordings';
+      const backendUrl = normalizeRecordingsUrl(rawBackend);
+      console.log('[TaskForge Background] Posting recording to normalized URL:', backendUrl);
 
       try {
         const response = await fetch(backendUrl, {
@@ -45,11 +63,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ status: 'success', data: resData, queue });
         } else {
           console.error('[TaskForge Background] Failed to post recording. Status:', response.status);
-          sendResponse({ status: 'error', statusCode: response.status, queue });
+          sendResponse({ status: 'error', statusCode: response.status, error: `HTTP ${response.status} from backend`, queue });
         }
       } catch (err: any) {
         console.error('[TaskForge Background] Network error posting recording:', err);
-        sendResponse({ status: 'error', error: err?.message, queue });
+        sendResponse({ status: 'error', error: err?.message || 'Network error', queue });
       }
     });
     return true;

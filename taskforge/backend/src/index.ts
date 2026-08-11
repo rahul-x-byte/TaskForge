@@ -110,8 +110,8 @@ fastify.register(async function (fastifyApp) {
 // REST ENDPOINTS
 // -------------------------------------------------------------
 
-// 1. POST /api/recordings — Accepts raw JSON array, creates workflow & version
-fastify.post('/api/recordings', async (request, reply) => {
+// 1. POST /api/recordings & POST /recordings — Accepts raw JSON array, creates workflow & version
+const handleCreateRecording = async (request: any, reply: any) => {
   const body = request.body as { name?: string; steps: any[] } | any[];
   const steps = Array.isArray(body) ? body : body?.steps || [];
   const name = (!Array.isArray(body) && body?.name) ? body.name : `Recorded Workflow ${new Date().toLocaleDateString()}`;
@@ -143,9 +143,12 @@ fastify.post('/api/recordings', async (request, reply) => {
     });
   } catch (err: any) {
     fastify.log.error(err);
-    return reply.status(500).send({ error: 'Failed to save recording', message: err?.message });
+    return reply.status(500).send({ error: 'Failed to save recorded workflow', message: err?.message });
   }
-});
+};
+
+fastify.post('/api/recordings', handleCreateRecording);
+fastify.post('/recordings', handleCreateRecording);
 
 // 1b. POST /api/workflows/from-template — Create workflow pre-populated from JSON fixture template
 fastify.post('/api/workflows/from-template', async (request, reply) => {
