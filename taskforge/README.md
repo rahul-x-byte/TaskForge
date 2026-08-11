@@ -14,7 +14,7 @@ taskforge/
 └── shared/              # Shared TypeScript types and interfaces
 ```
 
-## Quick Start
+## Quick Start (Local Development)
 
 ### 1. Infrastructure (Postgres & Redis)
 
@@ -60,7 +60,7 @@ cd extension && npm install && cd ..
   ```bash
   cd worker && npm run dev
   ```
-  Runs the Playwright task execution worker.
+  Runs the Playwright task execution worker (polls `http://localhost:3001/api/runs/pending`).
 
 - **Frontend App**:
   ```bash
@@ -72,30 +72,35 @@ cd extension && npm install && cd ..
 
 ## Production Deployment Architecture
 
-TaskForge requires **THREE separate services** to function in production:
+TaskForge is designed for production deployment across **Render** and **Vercel**:
 
 1. **Backend API (Render Web Service)**:
-   - Public REST & WebSocket API server.
-   - Deployed as a Node.js **Web Service** (`rootDir: taskforge/backend`).
+   - Node.js + Fastify REST & WebSocket API (`rootDir: taskforge/backend`).
+   - Serves API routes (`/api/*`), WebSocket connections (`/ws/runs/:id`), and uploaded result file downloads (`/api/runs/:id/download`).
 
-2. **Worker Engine (Render Background Worker)**:
-   - Continuous Node.js + Playwright worker process that polls `GET /api/runs/pending` and claims execution jobs via `POST /api/runs/:id/claim`.
-   - Must be deployed on Render as a **Background Worker** service type (NOT a Web Service) so it stays alive indefinitely with no HTTP port.
-   - Build script installs Playwright Chromium with system dependencies: `npx playwright install --with-deps chromium`.
+2. **Worker Engine (Render Free Web Service with HTTP Health Server)**:
+   - Node.js + Playwright Chromium worker process (`rootDir: taskforge/worker`).
+   - Runs an embedded HTTP health server listening on `$PORT` to maintain 100% free web service compatibility on Render.
+   - Continuously polls `GET /api/runs/pending` and claims jobs via `POST /api/runs/:id/claim`.
+   - Automatically uploads downloaded report files to the backend via `POST /api/runs/:id/upload-result`.
 
-3. **Frontend App (Vercel)**:
-   - React + Vite dashboard UI hosted on Vercel.
-   - Configure `VITE_API_BASE` environment variable in Vercel to point to your Render backend API (`https://taskforge-backend.onrender.com/api`).
+3. **Frontend Dashboard (Vercel)**:
+   - React 18 + Vite web dashboard hosted on Vercel.
+   - Dynamically derives WebSocket URL (`wss://`) from the connected API URL via `getWsBase()`.
+   - Features a header **`Backend Connected` ⚙️** pill allowing 1-click backend URL configuration saved in browser `localStorage`.
 
-> **Critical**: Workflows will remain stuck at `PENDING` if the worker service is not running continuously as a separate process.
+4. **Chrome Extension Recorder**:
+   - Manifest V3 extension with built-in URL auto-normalization (`normalizeRecordingsUrl()`).
+   - Allows typing or pasting any backend host into the popup UI, automatically targeting `/api/recordings`.
 
-### Deploying via Render Blueprint (`render.yaml`)
+### Render Blueprint Deployment (`render.yaml`)
 
-The repository includes a ready-to-use `render.yaml` Blueprint definition:
-1. In Render, select **New → Blueprint** and select your repository.
-2. Render will automatically provision:
+Use the included `render.yaml` Blueprint definition:
+1. In Render, select **New → Blueprint** and connect your repository.
+2. Render provisions:
    - Postgres Database (`taskforge-db`)
-   - Redis Instance (`taskforge-redis`)
+   - Redis Key-Value Store (`taskforge-redis`)
    - Backend Web Service (`taskforge-backend`)
-   - Worker Background Service (`taskforge-worker`)
-3. Set `FRONTEND_URL` on `taskforge-backend` to your Vercel URL.
+   - Worker Web Service (`taskforge-worker`)
+3. Set `FRONTEND_URL` on `taskforge-backend` to your Vercel URL (e.g. `https://task-forge-phi-six.vercel.app`).
+

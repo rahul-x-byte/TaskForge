@@ -23,10 +23,11 @@
 ## Phase 2a — Chrome Extension Recorder
 - [x] Create Manifest V3 `manifest.json` with `activeTab`, `scripting`, `downloads`, `storage` permissions.
 - [x] Build extension popup UI (`extension/src/popup.html` & `popup.ts`) with Start/Stop toggle button.
-- [x] Implement content script (`extension/src/content.ts`) to capture `click`, `input`, `change`, `submit`, and `history.pushState` navigation events.
+- [x] Implement content script (`extension/src/content.ts`) to capture `click`, `input`, `change`, `submit`, `blur`, and `history.pushState` navigation events.
 - [x] Implement 4-layer selector bundle extraction (ARIA role & accessible name, visible text, testId, CSS fallback).
 - [x] Implement automatic password value redaction (`[REDACTED]`).
 - [x] Implement background script (`extension/src/background.ts`) to send recorded JSON array to `POST /api/recordings`.
+- [x] Implement endpoint URL auto-normalization (`normalizeRecordingsUrl()`) and diagnostic error display in extension popup.
 
 ## Phase 2b — Fastify Backend API
 - [x] Create Fastify backend server (`backend/src/index.ts`) listening on port 3001.
@@ -66,6 +67,19 @@
 - [x] Implement Human-in-the-Loop sensitive credential gate (`awaiting_credentials`) for password steps (`[REDACTED]` / `inputType: password`).
 - [x] Implement in-memory secret handling (`POST /api/runs/:id/credentials` & `GET /api/runs/:id/credentials`) purging credentials immediately without logging or DB persistence.
 - [x] Implement Credential Input Modal in frontend (`RunStatusPage.tsx`) driven by WebSockets (`CREDENTIALS_REQUIRED`).
+
+## Phase 6 — Production Cloud Deployment & Service Bridge Fixes
+- [x] Create Render Blueprint definition (`render.yaml`) for database, redis, backend web service, and worker web service.
+- [x] Implement Backend-Worker HTTP Polling bridge (`GET /api/runs/pending` & `POST /api/runs/:id/claim`).
+- [x] Add embedded HTTP health-check server to worker (`worker/src/index.ts`) for 100% free web service deployment on Render.
+- [x] Implement `resolveBackendUrl()` in worker (`worker/src/config.ts`) to validate and auto-normalize missing `https://` schemes.
+- [x] Export `getWsBase()` in `frontend/src/api.ts` to derive secure `wss://` WebSocket URLs automatically on Vercel HTTPS pages.
+- [x] Add direct click-through from dashboard cards to approval run status pages (`WorkflowDashboard.tsx` & `App.tsx`).
+- [x] Implement Worker-to-Backend result file upload transfer (`POST /api/runs/:id/upload-result` & `executor.ts`).
+- [x] Add octet-stream binary body parser and upload directory handler in `backend/src/index.ts`.
+- [x] Implement dynamic frontend backend URL configuration in `Navbar.tsx` persisted via `localStorage`.
+
+---
 
 ## Future Roadmap / Enhancements
 - [ ] Drag-and-drop node re-ordering in React Flow graph editor.

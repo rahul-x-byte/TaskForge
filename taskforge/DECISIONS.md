@@ -62,3 +62,43 @@
   3. Add a 15-minute timeout to approval & credential gates, transitioning unhandled runs to `timed_out`.
   4. Prompt users via frontend modal when a run encounters password inputs (`awaiting_credentials`). Store credential values strictly in-memory during run duration via `POST /api/runs/:id/credentials` and `GET /api/runs/:id/credentials`, purging secrets immediately after fill without logging or database persistence.
 - **Consequences**: Eliminates false positive workflow pauses while ensuring zero secret leakage to logs or database storage.
+
+---
+
+## ADR-008: Persistent Render Worker & HTTP Polling Job Bridge
+- **Status**: Approved & Implemented
+- **Context**: Render background worker service types require paid plans. To run 100% free on Render while remaining continuously active polling for workflow runs, workers must handle HTTP health checks.
+- **Decision**: Add an embedded HTTP server listening on `$PORT` inside `worker/src/index.ts`. Deploy `taskforge-worker` as a `type: web` service on Render's `free` plan, polling `GET /api/runs/pending` and claiming execution jobs via `POST /api/runs/:id/claim`.
+- **Consequences**: Achieves continuous background execution on Render's 100% free tier.
+
+---
+
+## ADR-009: Vercel-Render Dynamic WebSocket Resolution via `getWsBase()`
+- **Status**: Approved & Implemented
+- **Context**: Hardcoded `ws://localhost:3001` URLs fail on HTTPS Vercel deployments due to browser mixed-content security policies blocking unencrypted WebSockets.
+- **Decision**: Export `getWsBase()` in `frontend/src/api.ts` which derives the WebSocket URL directly from the active `API_BASE` (`http` $\rightarrow$ `ws`, `https` $\rightarrow$ `wss`).
+- **Consequences**: Ensures secure `wss://` protocol connections on Vercel production deployments without requiring manual env var tweaks.
+
+---
+
+## ADR-010: Worker-to-Backend Result File Upload Transfer
+- **Status**: Approved & Implemented
+- **Context**: Worker and backend run on separate Render cloud instances with separate file storage, causing `404 Report file not found` errors when users attempt to download files from the web dashboard.
+- **Decision**: Add `uploadResultFileToBackend()` in `worker/src/executor.ts` that streams downloaded file buffers to `POST /api/runs/:id/upload-result` on the backend, which stores files in backend `uploads/` disk storage.
+- **Consequences**: Enables seamless report file downloads and previews from the web dashboard across separate cloud instances.
+
+---
+
+## ADR-011: Chrome Extension URL Auto-Normalization & Diagnostics
+- **Status**: Approved & Implemented
+- **Context**: Users typing base server URLs (e.g. `https://taskforge-backend-xxxx.onrender.com`) into the extension popup encountered 404 errors when posting recordings.
+- **Decision**: Add `normalizeRecordingsUrl()` in `extension/src/background.ts` to automatically format endpoints to target `/api/recordings`, and detect `x-render-routing: no-server` response headers to return clear diagnostic messages.
+- **Consequences**: Prevents user setup errors and provides instant feedback in the Chrome Extension popup.
+
+---
+
+## ADR-012: Dynamic Frontend Backend URL Configurator
+- **Status**: Approved & Implemented
+- **Context**: Hardcoded production backend fallbacks break whenever a user deletes and recreates a Render Blueprint with a new URL.
+- **Decision**: Add an interactive **Backend Connected ⚙️** pill in `Navbar.tsx` allowing 1-click URL configuration saved in browser `localStorage` under `taskforge_api_base`.
+- **Consequences**: Users can switch or update backend API URLs directly on the live Vercel dashboard without rebuilding or re-deploying code.
