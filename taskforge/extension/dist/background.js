@@ -57,7 +57,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 }
                 else {
                     console.error('[TaskForge Background] Failed to post recording. Status:', response.status);
-                    sendResponse({ status: 'error', statusCode: response.status, error: `HTTP ${response.status} from backend`, queue });
+                    const renderRoutingHeader = response.headers.get('x-render-routing');
+                    let errMsg = `HTTP ${response.status} from backend`;
+                    if (renderRoutingHeader === 'no-server' || response.status === 404) {
+                        errMsg = `Backend URL invalid or service not found on Render (${backendUrl}). Please check your active URL in Render Dashboard.`;
+                    }
+                    sendResponse({ status: 'error', statusCode: response.status, error: errMsg, queue });
                 }
             }
             catch (err) {
