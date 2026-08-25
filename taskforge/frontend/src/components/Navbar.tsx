@@ -34,7 +34,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
   const handleConfigureBackend = () => {
     const currentBase = API_BASE.includes('<YOUR-ACTIVE-BACKEND-URL>') ? DEFAULT_PROD_BACKEND_URL : API_BASE;
     const input = window.prompt(
-      'Enter your active Backend API URL (e.g. https://taskforge-backend-ta41.onrender.com/api or http://localhost:3001/api):',
+      'Enter your active Backend API URL (e.g. https://taskforge-backend-ta4i.onrender.com/api or http://localhost:3001/api):',
       currentBase
     );
     if (input && input.trim() && !input.includes('<YOUR-ACTIVE-BACKEND-URL>')) {

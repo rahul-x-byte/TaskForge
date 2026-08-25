@@ -6,6 +6,8 @@ export const getApiBase = () => {
     const saved = localStorage.getItem('taskforge_api_base');
     if (saved && saved.trim() && !saved.includes('<YOUR-ACTIVE-BACKEND-URL>')) {
       let cleaned = saved.trim().replace(/\/+$/, '');
+      // Auto-correct old typo ta41 to ta4i
+      cleaned = cleaned.replace(/ta41\.onrender\.com/g, 'ta4i.onrender.com');
       if (!cleaned.endsWith('/api')) cleaned = `${cleaned}/api`;
       return cleaned;
     }
@@ -13,6 +15,7 @@ export const getApiBase = () => {
   if (import.meta.env.VITE_API_BASE) {
     let envBase = import.meta.env.VITE_API_BASE.trim().replace(/\/+$/, '');
     if (!envBase.includes('<YOUR-ACTIVE-BACKEND-URL>')) {
+      envBase = envBase.replace(/ta41\.onrender\.com/g, 'ta4i.onrender.com');
       if (!envBase.endsWith('/api')) envBase = `${envBase}/api`;
       return envBase;
     }
@@ -32,6 +35,7 @@ export const setApiBase = (url: string) => {
   if (typeof window !== 'undefined') {
     let cleaned = url.trim().replace(/\/+$/, '');
     if (cleaned.includes('<YOUR-ACTIVE-BACKEND-URL>')) return;
+    cleaned = cleaned.replace(/ta41\.onrender\.com/g, 'ta4i.onrender.com');
     if (!cleaned.endsWith('/api')) cleaned = `${cleaned}/api`;
     localStorage.setItem('taskforge_api_base', cleaned);
     window.location.reload();
@@ -40,7 +44,8 @@ export const setApiBase = (url: string) => {
 
 export async function checkBackendHealth(): Promise<boolean> {
   try {
-    const healthUrl = API_BASE.replace(/\/api\/?$/, '') + '/health';
+    const currentBase = getApiBase();
+    const healthUrl = currentBase.replace(/\/api\/?$/, '') + '/health';
     const res = await fetch(healthUrl, { method: 'GET' });
     return res.ok;
   } catch (err) {
