@@ -1,5 +1,3 @@
-// @ts-ignore
-import playwright from 'playwright';
 import * as path from 'path';
 import * as fs from 'fs';
 import { readFile } from 'fs/promises';
@@ -10,8 +8,6 @@ type Browser = any;
 type BrowserContext = any;
 type Page = any;
 type Locator = any;
-
-const chromium = (playwright as any)?.chromium;
 
 const DOWNLOADS_DIR = path.resolve(process.cwd(), 'downloads');
 const FAILURES_DIR = path.resolve(process.cwd(), 'failures');
@@ -243,13 +239,25 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
     // Try launching Playwright Chromium; fallback to simulation mode if browser binary missing on cloud server
     const isHeadless = process.env.HEADLESS === 'true' || process.env.NODE_ENV === 'production' || !!process.env.RENDER || true;
     try {
-      browser = await chromium.launch({
-        headless: isHeadless,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-      });
-      context = await browser.newContext({ acceptDownloads: true });
-      await context.tracing.start({ screenshots: true, snapshots: true });
-      page = await context.newPage();
+      // Dynamic import to prevent ERR_MODULE_NOT_FOUND if playwright is not installed on host
+      let pwModule: any = null;
+      try {
+        // @ts-ignore
+        pwModule = await import('playwright').catch(() => null);
+      } catch (e) {}
+
+      const chromium = pwModule?.default?.chromium || pwModule?.chromium;
+      if (chromium) {
+        browser = await chromium.launch({
+          headless: isHeadless,
+          args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+        });
+        context = await browser.newContext({ acceptDownloads: true });
+        await context.tracing.start({ screenshots: true, snapshots: true });
+        page = await context.newPage();
+      } else {
+        console.warn(`[Executor] Playwright module unavailable on host. Progressing run steps in simulation mode.`);
+      }
 
       page.on('download', async (download: any) => {
         try {
