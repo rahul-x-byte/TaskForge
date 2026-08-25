@@ -3,15 +3,29 @@ export const DEFAULT_LOCAL_BACKEND_URL = 'http://localhost:3001/api';
 
 export const getApiBase = () => {
   if (typeof window !== 'undefined') {
+    const isHttps = window.location.protocol === 'https:';
     const saved = localStorage.getItem('taskforge_api_base');
     if (saved && saved.trim() && !saved.includes('<YOUR-ACTIVE-BACKEND-URL>')) {
       let cleaned = saved.trim().replace(/\/+$/, '');
-      // Auto-correct old typo ta41 to ta4i
       cleaned = cleaned.replace(/ta41\.onrender\.com/g, 'ta4i.onrender.com');
+
+      if (isHttps) {
+        if (cleaned.startsWith('http://') && !cleaned.includes('localhost')) {
+          cleaned = cleaned.replace(/^http:\/\//i, 'https://');
+        }
+        if (cleaned.includes('localhost') || cleaned.includes('127.0.0.1')) {
+          cleaned = DEFAULT_PROD_BACKEND_URL;
+        }
+      }
       if (!cleaned.endsWith('/api')) cleaned = `${cleaned}/api`;
       return cleaned;
     }
+
+    if (isHttps) {
+      return DEFAULT_PROD_BACKEND_URL;
+    }
   }
+
   if (import.meta.env.VITE_API_BASE) {
     let envBase = import.meta.env.VITE_API_BASE.trim().replace(/\/+$/, '');
     if (!envBase.includes('<YOUR-ACTIVE-BACKEND-URL>')) {
@@ -19,11 +33,6 @@ export const getApiBase = () => {
       if (!envBase.endsWith('/api')) envBase = `${envBase}/api`;
       return envBase;
     }
-  }
-  
-  // If running on HTTPS (e.g. Vercel deployment), default to active Render production backend
-  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
-    return DEFAULT_PROD_BACKEND_URL;
   }
 
   return DEFAULT_LOCAL_BACKEND_URL;
