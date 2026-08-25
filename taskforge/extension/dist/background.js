@@ -224,5 +224,5 @@ async function checkAndExecutePendingRuns() {
         console.error(`[Extension Poller Error]`, err);
     }
 }
-// Start polling every 2.5 seconds
-setInterval(checkAndExecutePendingRuns, 2500);
+// Start polling every 1.2 seconds for instant desktop browser tab execution
+setInterval(checkAndExecutePendingRuns, 1200);

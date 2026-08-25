@@ -359,12 +359,17 @@ fastify.post('/api/workflows/:id/run', async (request, reply) => {
       [runId, id, versionId]
     );
 
-    // Directly trigger Playwright worker execution in background
+    // Allow Chrome extension 8 seconds to claim pending run for desktop tab execution; fallback to cloud server worker if unclaimed
     setTimeout(() => {
-      executeWorkflowRun(id, versionId, runId).catch((err: any) => {
-        console.error('[Direct Worker Execution Error]', err);
-      });
-    }, 100);
+      pool.query(`SELECT status FROM runs WHERE id = $1`, [runId]).then((checkRes) => {
+        if (checkRes.rows[0]?.status === 'pending') {
+          console.log(`[Backend Run Engine] Run ${runId} unclaimed by extension after 8s. Executing cloud fallback worker...`);
+          executeWorkflowRun(id, versionId, runId).catch((err: any) => {
+            console.error('[Cloud Worker Fallback Error]', err);
+          });
+        }
+      }).catch(() => {});
+    }, 8000);
 
     return reply.status(202).send({
       message: 'Workflow run enqueued and started',
