@@ -138,3 +138,120 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 });
+
+// Extension Background Pending Run Poller & Auto-Executor
+async function checkAndExecutePendingRuns() {
+  try {
+    const storage = await chrome.storage.local.get(['backendUrl', 'isRecording']);
+    if (storage.isRecording) return;
+
+    let base = normalizeRecordingsUrl(storage.backendUrl || DEFAULT_BACKEND_URL);
+    base = base.replace(/\/recordings$/, '');
+
+    // Poll pending runs from backend
+    const res = await fetch(`${base}/runs/pending`).catch(() => null);
+    if (!res || !res.ok) return;
+
+    const pendingRuns: any[] = await res.json().catch(() => []);
+    if (!Array.isArray(pendingRuns) || pendingRuns.length === 0) return;
+
+    const targetRun = pendingRuns[0];
+    const runId = targetRun.id;
+    const workflowId = targetRun.workflow_id;
+
+    // Claim pending run
+    const claimRes = await fetch(`${base}/runs/${runId}/claim`, { method: 'POST' }).catch(() => null);
+    if (!claimRes || !claimRes.ok) return;
+
+    console.log(`[Extension Poller] Claimed pending run ${runId} for workflow ${workflowId}. Starting browser tab execution...`);
+
+    await fetch(`${base}/runs/${runId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'running' }),
+    }).catch(() => {});
+
+    // Fetch workflow steps
+    const wfRes = await fetch(`${base}/workflows/${workflowId}`).catch(() => null);
+    if (!wfRes || !wfRes.ok) {
+      await fetch(`${base}/runs/${runId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'failed', error: 'Failed to load workflow steps' }),
+      }).catch(() => {});
+      return;
+    }
+
+    const wfData: any = await wfRes.json();
+    const steps = wfData.steps || [];
+    if (!Array.isArray(steps) || steps.length === 0) {
+      await fetch(`${base}/runs/${runId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'completed', finishedAt: new Date().toISOString() }),
+      }).catch(() => {});
+      return;
+    }
+
+    const firstStep = steps[0];
+    const initialUrl = firstStep.value || firstStep.pageUrl || 'https://www.google.com';
+
+    chrome.tabs.create({ url: initialUrl }, (tab) => {
+      if (!tab || !tab.id) {
+        fetch(`${base}/runs/${runId}/status`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'failed', error: 'Failed to create browser tab' }),
+        }).catch(() => {});
+        return;
+      }
+      const tabId = tab.id;
+
+      const listener = (updatedTabId: number, info: chrome.tabs.TabChangeInfo) => {
+        if (updatedTabId === tabId && info.status === 'complete') {
+          chrome.tabs.onUpdated.removeListener(listener);
+
+          let stepIdx = 0;
+          const runNextStep = () => {
+            if (stepIdx >= steps.length) {
+              console.log(`[Extension Poller] Run ${runId} completed in browser tab!`);
+              fetch(`${base}/runs/${runId}/status`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'completed', finishedAt: new Date().toISOString() }),
+              }).catch(() => {});
+              return;
+            }
+
+            const currentStep = steps[stepIdx];
+            const targetLabel = currentStep.selectors?.name || currentStep.selectors?.text || currentStep.selectors?.css || 'Target element';
+
+            fetch(`${base}/runs/${runId}/status`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                status: 'running',
+                detail: { stepIndex: stepIdx, action: currentStep.action, targetLabel, pageUrl: currentStep.pageUrl || '', totalSteps: steps.length },
+              }),
+            }).catch(() => {});
+
+            stepIdx++;
+
+            chrome.tabs.sendMessage(tabId, { type: 'EXECUTE_STEP', step: currentStep }, () => {
+              setTimeout(runNextStep, 900);
+            });
+          };
+
+          setTimeout(runNextStep, 1200);
+        }
+      };
+      chrome.tabs.onUpdated.addListener(listener);
+    });
+
+  } catch (err) {
+    console.error(`[Extension Poller Error]`, err);
+  }
+}
+
+// Start polling every 2.5 seconds
+setInterval(checkAndExecutePendingRuns, 2500);
