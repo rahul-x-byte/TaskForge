@@ -8,6 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { pool } from './db/index.js';
+import { executeWorkflowRun } from './executor.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -244,11 +245,22 @@ fastify.get('/api/workflows', async (request, reply) => {
        LEFT JOIN workflow_versions wv ON w.current_version_id = wv.id
        ORDER BY w.created_at DESC`
     );
-    const list = res.rows.map((wf) => ({
-      ...wf,
-      schedule: memorySchedules.get(wf.id) || null,
-      lastStatus: wf.lastStatus || wf.last_status || 'never_run',
-    }));
+    const list = res.rows.map((wf) => {
+      let parsedSteps = wf.steps;
+      if (typeof parsedSteps === 'string') {
+        try {
+          parsedSteps = JSON.parse(parsedSteps);
+        } catch (e) {
+          parsedSteps = [];
+        }
+      }
+      return {
+        ...wf,
+        steps: Array.isArray(parsedSteps) ? parsedSteps : [],
+        schedule: memorySchedules.get(wf.id) || null,
+        lastStatus: wf.lastStatus || wf.last_status || 'never_run',
+      };
+    });
     return reply.send(list);
   } catch (err: any) {
     fastify.log.error(err);
@@ -273,6 +285,13 @@ fastify.get('/api/workflows/:id', async (request, reply) => {
     }
 
     const item = res.rows[0];
+    if (typeof item.steps === 'string') {
+      try {
+        item.steps = JSON.parse(item.steps);
+      } catch (e) {
+        item.steps = [];
+      }
+    }
     item.schedule = memorySchedules.get(id) || null;
     return reply.send(item);
   } catch (err: any) {
@@ -340,8 +359,15 @@ fastify.post('/api/workflows/:id/run', async (request, reply) => {
       [runId, id, versionId]
     );
 
+    // Directly trigger Playwright worker execution in background
+    setTimeout(() => {
+      executeWorkflowRun(id, versionId, runId).catch((err: any) => {
+        console.error('[Direct Worker Execution Error]', err);
+      });
+    }, 100);
+
     return reply.status(202).send({
-      message: 'Workflow run enqueued',
+      message: 'Workflow run enqueued and started',
       runId,
       workflowId: id,
       versionId,

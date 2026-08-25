@@ -4,12 +4,18 @@ chrome.runtime.onInstalled.addListener(() => {
     console.log('[TaskForge Background] Extension installed.');
     chrome.storage.local.set({ isRecording: false, recordingQueue: [] });
 });
+const DEFAULT_BACKEND_URL = 'http://localhost:3001/api/recordings';
 function normalizeRecordingsUrl(urlStr) {
     let cleaned = (urlStr || '').trim();
     if (!cleaned)
-        return 'https://taskforge-backend-ta41.onrender.com/api/recordings';
+        return DEFAULT_BACKEND_URL;
     if (!/^https?:\/\//i.test(cleaned)) {
-        cleaned = `https://${cleaned}`;
+        if (/^(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)/i.test(cleaned)) {
+            cleaned = `http://${cleaned}`;
+        }
+        else {
+            cleaned = `https://${cleaned}`;
+        }
     }
     cleaned = cleaned.replace(/\/+$/, '');
     if (cleaned.endsWith('/api/recordings') || cleaned.endsWith('/recordings')) {
@@ -36,7 +42,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             await chrome.storage.local.set({ isRecording: false });
             // POST recording sequence to Backend API
             const storage = await chrome.storage.local.get(['backendUrl']);
-            const rawBackend = message.backendUrl || storage.backendUrl || 'https://taskforge-backend-ta41.onrender.com/api/recordings';
+            const rawBackend = message.backendUrl || storage.backendUrl || DEFAULT_BACKEND_URL;
             const backendUrl = normalizeRecordingsUrl(rawBackend);
             console.log('[TaskForge Background] Posting recording to normalized URL:', backendUrl);
             try {

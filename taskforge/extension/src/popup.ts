@@ -5,7 +5,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const backendUrlInput = document.getElementById('backend-url-input') as HTMLInputElement;
   const syncMsg = document.getElementById('sync-msg') as HTMLDivElement;
 
-  const DEFAULT_BACKEND_URL = 'https://taskforge-backend-ta41.onrender.com/api/recordings';
+  const DEFAULT_BACKEND_URL = 'http://localhost:3001/api/recordings';
 
   // Load saved backend URL or set default
   chrome.storage.local.get(['backendUrl'], (result) => {

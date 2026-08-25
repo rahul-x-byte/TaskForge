@@ -1,6 +1,6 @@
-import React from 'react';
-import { Layers, Server, Clock, Settings } from 'lucide-react';
-import { API_BASE, setApiBase } from '../api';
+import React, { useEffect, useState } from 'react';
+import { Layers, Server, Clock, Settings, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { API_BASE, setApiBase, checkBackendHealth, DEFAULT_PROD_BACKEND_URL } from '../api';
 
 interface NavbarProps {
   activeTab: 'workflows' | 'audit' | 'detail' | 'run';
@@ -8,18 +8,43 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
+  const [isConnected, setIsConnected] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    const verifyHealth = async () => {
+      const ok = await checkBackendHealth();
+      if (isMounted) setIsConnected(ok);
+    };
+    verifyHealth();
+    const interval = setInterval(verifyHealth, 6000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
+
   const isProductionBackend = API_BASE.includes('onrender.com');
-  const serverLabel = isProductionBackend ? 'Backend Connected' : 'Backend Connected (Local)';
+  const serverLabel = isConnected === null
+    ? 'Checking Backend...'
+    : isConnected
+    ? (isProductionBackend ? 'Backend Connected (Render)' : 'Backend Connected (Local)')
+    : 'Backend Disconnected';
 
   const handleConfigureBackend = () => {
+    const currentBase = API_BASE.includes('<YOUR-ACTIVE-BACKEND-URL>') ? DEFAULT_PROD_BACKEND_URL : API_BASE;
     const input = window.prompt(
-      'Enter your active Render Backend API URL (e.g. https://taskforge-backend-xxxx.onrender.com/api):',
-      API_BASE
+      'Enter your active Backend API URL (e.g. https://taskforge-backend-ta41.onrender.com/api or http://localhost:3001/api):',
+      currentBase
     );
-    if (input && input.trim()) {
+    if (input && input.trim() && !input.includes('<YOUR-ACTIVE-BACKEND-URL>')) {
       setApiBase(input.trim());
     }
   };
+
+  const badgeColor = isConnected === false ? '#f87171' : isConnected ? '#34d399' : '#fbbf24';
+  const badgeBg = isConnected === false ? 'rgba(248, 113, 113, 0.15)' : isConnected ? 'rgba(52, 211, 153, 0.1)' : 'rgba(251, 191, 36, 0.15)';
+  const badgeBorder = isConnected === false ? 'rgba(248, 113, 113, 0.3)' : isConnected ? 'rgba(52, 211, 153, 0.2)' : 'rgba(251, 191, 36, 0.3)';
 
   return (
     <header className="glass-panel" style={{ margin: '1rem 1.5rem', padding: '0.85rem 1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -82,16 +107,19 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
           alignItems: 'center',
           gap: '0.5rem',
           fontSize: '0.8rem',
-          color: '#34d399',
-          background: 'rgba(52, 211, 153, 0.1)',
+          color: badgeColor,
+          background: badgeBg,
           padding: '0.35rem 0.75rem',
           borderRadius: '9999px',
           cursor: 'pointer',
-          border: '1px solid rgba(52, 211, 153, 0.2)',
+          border: `1px solid ${badgeBorder}`,
+          transition: 'all 0.2s ease',
         }}
         title={`Connected API: ${API_BASE} (Click to change backend URL)`}
       >
-        <Server size={14} /> {serverLabel} <Settings size={12} style={{ opacity: 0.7 }} />
+        {isConnected === false ? <AlertCircle size={14} /> : isConnected ? <CheckCircle2 size={14} /> : <Server size={14} />}
+        {serverLabel}
+        <Settings size={12} style={{ opacity: 0.7 }} />
       </div>
     </header>
   );

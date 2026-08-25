@@ -264,8 +264,11 @@ export async function executeWorkflowRun(workflowId, versionId, runId) {
             body: JSON.stringify({ status: 'running' }),
         });
         // 2. Launch Browser & Tracing
-        const isHeadless = process.env.HEADLESS === 'true' || process.env.NODE_ENV === 'production' || !!process.env.RENDER;
-        browser = await chromium.launch({ headless: isHeadless });
+        const isHeadless = process.env.HEADLESS === 'true' || process.env.NODE_ENV === 'production' || !!process.env.RENDER || true;
+        browser = await chromium.launch({
+            headless: isHeadless,
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+        });
         context = await browser.newContext({ acceptDownloads: true });
         await context.tracing.start({ screenshots: true, snapshots: true });
         page = await context.newPage();

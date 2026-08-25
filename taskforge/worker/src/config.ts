@@ -8,7 +8,7 @@ export function resolveBackendUrl(): string {
     console.error(
       `[Worker Fatal] BACKEND_URL is invalid: "${raw}". ` +
       `It must be a full URL including https://, e.g. ` +
-      `https://taskforge-backend-ta41.onrender.com`
+      `https://taskforge-backend-ta4i.onrender.com`
     );
     process.exit(1);
   }

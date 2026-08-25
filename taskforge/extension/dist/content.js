@@ -87,6 +87,16 @@ async function recordAction(action) {
         if (!data.isRecording)
             return;
         const queue = data.recordingQueue || [];
+        // Auto-inject initial navigation step if starting recording mid-session
+        if (queue.length === 0 && action.action !== 'navigate') {
+            queue.push({
+                action: 'navigate',
+                timestamp: action.timestamp - 1,
+                selectors: { css: 'window' },
+                value: window.location.href,
+                pageUrl: window.location.href,
+            });
+        }
         // De-duplicate rapid input typing into the same element
         if (action.action === 'input' && queue.length > 0) {
             const last = queue[queue.length - 1];

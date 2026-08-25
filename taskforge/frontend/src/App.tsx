@@ -28,6 +28,26 @@ export default function App() {
     loadWorkflows();
   }, [loadWorkflows]);
 
+  useEffect(() => {
+    const handleFocus = () => {
+      if (activeTab === 'workflows') {
+        loadWorkflows();
+      }
+    };
+    window.addEventListener('focus', handleFocus);
+
+    const interval = setInterval(() => {
+      if (activeTab === 'workflows') {
+        loadWorkflows();
+      }
+    }, 3000);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      clearInterval(interval);
+    };
+  }, [activeTab, loadWorkflows]);
+
   const handleSelectWorkflow = (workflowId: string) => {
     setSelectedWorkflowId(workflowId);
     setActiveTab('detail');

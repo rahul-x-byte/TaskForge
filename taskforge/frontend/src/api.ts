@@ -1,7 +1,10 @@
+export const DEFAULT_PROD_BACKEND_URL = 'https://taskforge-backend-ta4i.onrender.com/api';
+export const DEFAULT_LOCAL_BACKEND_URL = 'http://localhost:3001/api';
+
 export const getApiBase = () => {
   if (typeof window !== 'undefined') {
     const saved = localStorage.getItem('taskforge_api_base');
-    if (saved && saved.trim()) {
+    if (saved && saved.trim() && !saved.includes('<YOUR-ACTIVE-BACKEND-URL>')) {
       let cleaned = saved.trim().replace(/\/+$/, '');
       if (!cleaned.endsWith('/api')) cleaned = `${cleaned}/api`;
       return cleaned;
@@ -9,10 +12,18 @@ export const getApiBase = () => {
   }
   if (import.meta.env.VITE_API_BASE) {
     let envBase = import.meta.env.VITE_API_BASE.trim().replace(/\/+$/, '');
-    if (!envBase.endsWith('/api')) envBase = `${envBase}/api`;
-    return envBase;
+    if (!envBase.includes('<YOUR-ACTIVE-BACKEND-URL>')) {
+      if (!envBase.endsWith('/api')) envBase = `${envBase}/api`;
+      return envBase;
+    }
   }
-  return 'http://localhost:3001/api';
+  
+  // If running on HTTPS (e.g. Vercel deployment), default to active Render production backend
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+    return DEFAULT_PROD_BACKEND_URL;
+  }
+
+  return DEFAULT_LOCAL_BACKEND_URL;
 };
 
 export const API_BASE = getApiBase();
@@ -20,11 +31,22 @@ export const API_BASE = getApiBase();
 export const setApiBase = (url: string) => {
   if (typeof window !== 'undefined') {
     let cleaned = url.trim().replace(/\/+$/, '');
+    if (cleaned.includes('<YOUR-ACTIVE-BACKEND-URL>')) return;
     if (!cleaned.endsWith('/api')) cleaned = `${cleaned}/api`;
     localStorage.setItem('taskforge_api_base', cleaned);
     window.location.reload();
   }
 };
+
+export async function checkBackendHealth(): Promise<boolean> {
+  try {
+    const healthUrl = API_BASE.replace(/\/api\/?$/, '') + '/health';
+    const res = await fetch(healthUrl, { method: 'GET' });
+    return res.ok;
+  } catch (err) {
+    return false;
+  }
+}
 
 export const getWsBase = () => {
   if (import.meta.env.VITE_WS_BASE) return import.meta.env.VITE_WS_BASE;

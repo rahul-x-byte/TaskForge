@@ -125,7 +125,7 @@ async function waitForApprovalGate(page: Page | null, runId: string, stepIndex: 
       // 1. Check if user clicked approve/resume via UI
       const res = await fetch(`${BACKEND_URL}/api/runs/${runId}`);
       if (res.ok) {
-        const data = await res.json();
+        const data: any = await res.json();
         const currentStatus = data.run?.status;
         console.log(`[Approval Gate] Polling run ${runId} status: ${currentStatus}`);
 
@@ -202,7 +202,7 @@ async function waitForCredentialsGate(page: Page | null, runId: string, stepInde
       // 1. Check in-memory credential store via GET /api/runs/:id/credentials
       const credRes = await fetch(`${BACKEND_URL}/api/runs/${runId}/credentials`);
       if (credRes.ok) {
-        const credData = await credRes.json();
+        const credData: any = await credRes.json();
         if (credData.found && credData.credential?.value !== undefined) {
           console.log(`[Credentials Gate] Credential received via UI for run ${runId} step ${stepIndex + 1}. Resuming execution.`);
           return credData.credential.value;
@@ -226,7 +226,7 @@ async function waitForCredentialsGate(page: Page | null, runId: string, stepInde
       // 3. Check if run was aborted or cancelled
       const runRes = await fetch(`${BACKEND_URL}/api/runs/${runId}`);
       if (runRes.ok) {
-        const data = await runRes.json();
+        const data: any = await runRes.json();
         const currentStatus = data.run?.status;
         if (currentStatus === 'cancelled' || currentStatus === 'failed') {
           console.log(`[Credentials Gate] Run ${runId} was cancelled/aborted.`);
@@ -267,7 +267,7 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
     if (!wfRes.ok) {
       throw new Error(`Failed to load workflow ${workflowId}`);
     }
-    const wfData = await wfRes.json();
+    const wfData: any = await wfRes.json();
     const rawSteps: (RecordedAction & { isSensitive?: boolean })[] = wfData.steps || [];
 
     console.log(`[Executor] Starting execution for Run ${runId} (Workflow: ${wfData.name}, Total Steps: ${rawSteps.length})`);
@@ -280,8 +280,11 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
     });
 
     // 2. Launch Browser & Tracing
-    const isHeadless = process.env.HEADLESS === 'true' || process.env.NODE_ENV === 'production' || !!process.env.RENDER;
-    browser = await chromium.launch({ headless: isHeadless });
+    const isHeadless = process.env.HEADLESS === 'true' || process.env.NODE_ENV === 'production' || !!process.env.RENDER || true;
+    browser = await chromium.launch({
+      headless: isHeadless,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    });
     context = await browser.newContext({ acceptDownloads: true });
     await context.tracing.start({ screenshots: true, snapshots: true });
     page = await context.newPage();
@@ -465,7 +468,7 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
     try {
       const checkRes = await fetch(`${BACKEND_URL}/api/runs/${runId}`);
       if (checkRes.ok) {
-        const data = await checkRes.json();
+        const data: any = await checkRes.json();
         if (data.run?.status === 'cancelled') {
           isCancelled = true;
         }
