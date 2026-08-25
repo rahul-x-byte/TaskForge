@@ -5,20 +5,22 @@ export const getApiBase = () => {
   if (typeof window !== 'undefined') {
     const isHttps = window.location.protocol === 'https:';
     const saved = localStorage.getItem('taskforge_api_base');
-    if (saved && saved.trim() && !saved.includes('<YOUR-ACTIVE-BACKEND-URL>')) {
-      let cleaned = saved.trim().replace(/\/+$/, '');
-      cleaned = cleaned.replace(/ta41\.onrender\.com/g, 'ta4i.onrender.com');
-
-      if (isHttps) {
-        if (cleaned.startsWith('http://') && !cleaned.includes('localhost')) {
-          cleaned = cleaned.replace(/^http:\/\//i, 'https://');
+    if (saved) {
+      if (saved.includes('ta41') || saved.includes('<YOUR-ACTIVE-BACKEND-URL>')) {
+        localStorage.removeItem('taskforge_api_base');
+      } else {
+        let cleaned = saved.trim().replace(/\/+$/, '');
+        if (isHttps) {
+          if (cleaned.startsWith('http://') && !cleaned.includes('localhost')) {
+            cleaned = cleaned.replace(/^http:\/\//i, 'https://');
+          }
+          if (cleaned.includes('localhost') || cleaned.includes('127.0.0.1')) {
+            cleaned = DEFAULT_PROD_BACKEND_URL;
+          }
         }
-        if (cleaned.includes('localhost') || cleaned.includes('127.0.0.1')) {
-          cleaned = DEFAULT_PROD_BACKEND_URL;
-        }
+        if (!cleaned.endsWith('/api')) cleaned = `${cleaned}/api`;
+        return cleaned;
       }
-      if (!cleaned.endsWith('/api')) cleaned = `${cleaned}/api`;
-      return cleaned;
     }
 
     if (isHttps) {
@@ -55,8 +57,12 @@ export async function checkBackendHealth(): Promise<boolean> {
   try {
     const currentBase = getApiBase();
     const healthUrl = currentBase.replace(/\/api\/?$/, '') + '/health';
-    const res = await fetch(healthUrl, { method: 'GET' });
-    return res.ok;
+    const res = await fetch(healthUrl, { method: 'GET' }).catch(() => null);
+    if (res && res.ok) return true;
+
+    // Fallback check to /api/workflows
+    const wfRes = await fetch(`${currentBase}/workflows`, { method: 'GET' }).catch(() => null);
+    return !!(wfRes && wfRes.ok);
   } catch (err) {
     return false;
   }
