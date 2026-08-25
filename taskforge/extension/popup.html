@@ -2,11 +2,11 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>TaskForge Recorder</title>
+    <title>TaskForge Automation</title>
     <style>
       body {
         font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        width: 260px;
+        width: 280px;
         padding: 16px;
         margin: 0;
         background: #0f172a;
@@ -16,7 +16,7 @@
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 12px;
+        gap: 10px;
       }
       h2 {
         margin: 0;
@@ -42,7 +42,7 @@
       }
       button {
         width: 100%;
-        padding: 10px;
+        padding: 9px;
         border: none;
         border-radius: 6px;
         font-weight: 600;
@@ -67,17 +67,55 @@
         font-size: 0.8rem;
         color: #94a3b8;
       }
+      .workflow-item {
+        background: #1e293b;
+        border: 1px solid #334155;
+        border-radius: 6px;
+        padding: 6px 8px;
+        margin-top: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .workflow-name {
+        font-size: 0.73rem;
+        color: #f8fafc;
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 150px;
+      }
+      .btn-run-browser {
+        background: #059669;
+        color: #ffffff;
+        font-size: 0.68rem;
+        padding: 4px 8px;
+        border-radius: 4px;
+        width: auto;
+      }
+      .btn-run-browser:hover {
+        background: #10b981;
+      }
     </style>
   </head>
   <body>
     <div class="card">
-      <h2>TaskForge Recorder</h2>
+      <h2>TaskForge Automation</h2>
       <div id="status-badge" class="badge">Idle</div>
       <button id="toggle-btn" class="btn-start">Start Recording</button>
       <div id="action-count" class="count">0 actions recorded</div>
-      <div style="width: 100%; text-align: left; margin-top: 4px;">
+
+      <div style="width: 100%; text-align: left; border-top: 1px solid #334155; padding-top: 8px;">
+        <label style="font-size: 0.75rem; color: #38bdf8; display: block; font-weight: 700; margin-bottom: 4px;">▶ Run Workflows in Browser</label>
+        <div id="workflows-list" style="max-height: 110px; overflow-y: auto;">
+          <div style="font-size: 0.72rem; color: #94a3b8;">Loading workflows...</div>
+        </div>
+      </div>
+
+      <div style="width: 100%; text-align: left;">
         <label style="font-size: 0.7rem; color: #94a3b8; display: block; margin-bottom: 4px; font-weight: 600;">Backend API Endpoint</label>
-        <input id="backend-url-input" type="text" style="width: 100%; box-sizing: border-box; background: #1e293b; border: 1px solid #334155; color: #38bdf8; padding: 6px 8px; border-radius: 4px; font-size: 0.72rem; font-family: monospace;" placeholder="http://localhost:3001/api/recordings" />
+        <input id="backend-url-input" type="text" style="width: 100%; box-sizing: border-box; background: #1e293b; border: 1px solid #334155; color: #38bdf8; padding: 6px 8px; border-radius: 4px; font-size: 0.72rem; font-family: monospace;" placeholder="https://taskforge-backend-ta4i.onrender.com/api/recordings" />
       </div>
       <div id="sync-msg" style="font-size: 0.72rem; color: #34d399; display: none; text-align: center;"></div>
     </div>

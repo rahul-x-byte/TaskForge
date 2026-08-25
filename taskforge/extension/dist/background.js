@@ -4,7 +4,7 @@ chrome.runtime.onInstalled.addListener(() => {
     console.log('[TaskForge Background] Extension installed.');
     chrome.storage.local.set({ isRecording: false, recordingQueue: [] });
 });
-const DEFAULT_BACKEND_URL = 'http://localhost:3001/api/recordings';
+const DEFAULT_BACKEND_URL = 'https://taskforge-backend-ta4i.onrender.com/api/recordings';
 function normalizeRecordingsUrl(urlStr) {
     let cleaned = (urlStr || '').trim();
     if (!cleaned)
@@ -75,6 +75,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 console.error('[TaskForge Background] Network error posting recording:', err);
                 sendResponse({ status: 'error', error: err?.message || 'Network error', queue });
             }
+        });
+        return true;
+    }
+    if (message.type === 'EXECUTE_IN_BROWSER') {
+        const steps = message.steps || [];
+        if (!Array.isArray(steps) || steps.length === 0) {
+            sendResponse({ status: 'error', error: 'No steps provided to execute' });
+            return true;
+        }
+        const firstStep = steps[0];
+        const initialUrl = firstStep.value || firstStep.pageUrl || 'https://www.google.com';
+        chrome.tabs.create({ url: initialUrl }, (tab) => {
+            if (!tab || !tab.id) {
+                sendResponse({ status: 'error', error: 'Failed to create browser tab' });
+                return;
+            }
+            const tabId = tab.id;
+            const listener = (updatedTabId, info) => {
+                if (updatedTabId === tabId && info.status === 'complete') {
+                    chrome.tabs.onUpdated.removeListener(listener);
+                    let stepIdx = 0;
+                    const runNextStep = () => {
+                        if (stepIdx >= steps.length) {
+                            console.log('[TaskForge Background Execution] All steps executed in browser tab!');
+                            sendResponse({ status: 'success', completedSteps: steps.length });
+                            return;
+                        }
+                        const currentStep = steps[stepIdx];
+                        stepIdx++;
+                        chrome.tabs.sendMessage(tabId, { type: 'EXECUTE_STEP', step: currentStep }, () => {
+                            setTimeout(runNextStep, 800);
+                        });
+                    };
+                    setTimeout(runNextStep, 1200);
+                }
+            };
+            chrome.tabs.onUpdated.addListener(listener);
         });
         return true;
     }

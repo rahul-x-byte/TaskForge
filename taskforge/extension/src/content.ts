@@ -242,5 +242,95 @@ function setupRecordingListeners() {
   });
 }
 
+// In-browser Step Execution Engine
+function findElementBySelectors(selectors: SelectorBundle): HTMLElement | null {
+  if (!selectors) return null;
+
+  if (selectors.css && selectors.css !== 'body' && selectors.css !== 'html') {
+    try {
+      const el = document.querySelector(selectors.css) as HTMLElement;
+      if (el) return el;
+    } catch (e) {}
+  }
+
+  if (selectors.videoId) {
+    try {
+      const el = document.querySelector(`a[href*="${selectors.videoId}"]`) as HTMLElement;
+      if (el) return el;
+    } catch (e) {}
+  }
+
+  if (selectors.testId) {
+    try {
+      const el = document.querySelector(`[data-testid="${selectors.testId}"]`) as HTMLElement;
+      if (el) return el;
+    } catch (e) {}
+  }
+
+  if (selectors.text && selectors.text.length < 100) {
+    try {
+      const xpath = `//*[contains(text(), '${selectors.text.replace(/'/g, "\\'")}')]`;
+      const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+      if (result.singleNodeValue) return result.singleNodeValue as HTMLElement;
+    } catch (e) {}
+  }
+
+  return null;
+}
+
+function highlightElement(el: HTMLElement) {
+  try {
+    const origOutline = el.style.outline;
+    const origBoxShadow = el.style.boxShadow;
+    el.style.outline = '2px solid #38bdf8';
+    el.style.boxShadow = '0 0 12px rgba(56, 189, 248, 0.8)';
+    setTimeout(() => {
+      el.style.outline = origOutline;
+      el.style.boxShadow = origBoxShadow;
+    }, 600);
+  } catch (e) {}
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'EXECUTE_STEP') {
+    const step: RecordedAction = message.step;
+    if (!step) {
+      sendResponse({ status: 'error', error: 'No step provided' });
+      return true;
+    }
+
+    if (step.action === 'navigate') {
+      const targetUrl = step.value || step.pageUrl;
+      if (targetUrl && targetUrl !== window.location.href) {
+        window.location.href = targetUrl;
+      }
+      sendResponse({ status: 'success' });
+      return true;
+    }
+
+    const el = findElementBySelectors(step.selectors);
+    if (!el) {
+      sendResponse({ status: 'element_not_found' });
+      return true;
+    }
+
+    highlightElement(el);
+
+    if (step.action === 'click' || step.action === 'submit') {
+      el.click();
+      sendResponse({ status: 'success' });
+    } else if (step.action === 'input' || step.action === 'change') {
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
+        el.value = step.value || '';
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('blur', { bubbles: true }));
+      }
+      sendResponse({ status: 'success' });
+    }
+    return true;
+  }
+});
+
 // Initialize content script
 setupRecordingListeners();
