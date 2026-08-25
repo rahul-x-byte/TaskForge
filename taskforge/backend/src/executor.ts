@@ -1,11 +1,17 @@
-import playwright, { type Browser, type BrowserContext, type Page, type Locator } from 'playwright';
+// @ts-ignore
+import playwright from 'playwright';
 import * as path from 'path';
 import * as fs from 'fs';
 import { readFile } from 'fs/promises';
 import { SelectorBundle, RecordedAction } from '@taskforge/shared';
 import { resolveBackendUrl } from './config.js';
 
-const { chromium } = playwright;
+type Browser = any;
+type BrowserContext = any;
+type Page = any;
+type Locator = any;
+
+const chromium = (playwright as any)?.chromium;
 
 const DOWNLOADS_DIR = path.resolve(process.cwd(), 'downloads');
 const FAILURES_DIR = path.resolve(process.cwd(), 'failures');
@@ -245,7 +251,7 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
       await context.tracing.start({ screenshots: true, snapshots: true });
       page = await context.newPage();
 
-      page.on('download', async (download) => {
+      page.on('download', async (download: any) => {
         try {
           const origFilename = download.suggestedFilename() || `result_download_${Date.now()}.pdf`;
           const destPath = path.join(DOWNLOADS_DIR, origFilename);
@@ -255,8 +261,8 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
         } catch (dErr) {}
       });
 
-      context.on('page', async (newPage) => {
-        newPage.on('download', async (download) => {
+      context.on('page', async (newPage: any) => {
+        newPage.on('download', async (download: any) => {
           try {
             const origFilename = download.suggestedFilename() || `result_report_${Date.now()}.pdf`;
             const destPath = path.join(DOWNLOADS_DIR, origFilename);
@@ -266,7 +272,7 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
           } catch (e) {}
         });
 
-        newPage.on('response', async (res) => {
+        newPage.on('response', async (res: any) => {
           try {
             const ct = res.headers()['content-type'] || '';
             const resUrl = res.url();
