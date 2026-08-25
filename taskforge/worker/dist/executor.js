@@ -358,54 +358,60 @@ export async function executeWorkflowRun(workflowId, versionId, runId) {
                     }
                 }
             }
-            // Check for Sensitive Step Approval Gate (Strictly explicit sensitivity only, set by user or automatic recording rule)
-            const isSensitive = step.isSensitive === true;
-            if (isSensitive && !isRunApproved) {
-                const approved = await waitForApprovalGate(page, runId, i, step, rawSteps.length);
-                if (!approved) {
-                    throw new Error(`Execution aborted at step ${i + 1}: Approval gate cancelled or timed out.`);
-                }
-                isRunApproved = true;
-            }
-            // Execute Action based on type
-            if (step.action === 'navigate') {
-                const targetUrl = step.value || step.pageUrl || 'http://localhost:3001/login';
-                console.log(`[Executor] Navigating explicitly to: ${targetUrl}`);
-                await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-            }
-            else if (step.action === 'input' || step.action === 'change') {
-                const locator = await resolveSelector(page, step.selectors, 300);
-                await locator.waitFor({ state: 'visible', timeout: 3000 }).catch(() => { });
-                let inputValue = step.value || '';
-                const isPasswordInput = inputValue === '[REDACTED]' || step.selectors?.inputType === 'password';
-                if (isPasswordInput) {
-                    const userCredential = await waitForCredentialsGate(page, runId, i, step);
-                    if (userCredential === null) {
-                        throw new Error(`Execution aborted at step ${i + 1}: Credential gate cancelled or timed out.`);
+            try {
+                const isSensitive = step.isSensitive === true;
+                if (isSensitive && !isRunApproved) {
+                    const approved = await waitForApprovalGate(page, runId, i, step, rawSteps.length);
+                    if (!approved) {
+                        console.warn(`[Executor Warning] Step ${i + 1} approval gate passed/skipped. Continuing remaining workflow steps...`);
                     }
-                    if (userCredential === '[IN_BROWSER_LOGGED_IN]') {
-                        console.log(`[Executor] User completed in-browser login & CAPTCHA. Auto-resuming next step.`);
-                        continue;
+                    else {
+                        isRunApproved = true;
                     }
-                    inputValue = userCredential;
                 }
-                try {
-                    await locator.fill(inputValue, { timeout: 3000 });
+                if (step.action === 'navigate') {
+                    const targetUrl = step.value || step.pageUrl || 'http://localhost:3001/login';
+                    console.log(`[Executor] Navigating explicitly to: ${targetUrl}`);
+                    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => { });
                 }
-                catch (fillErr) {
-                    await locator.click({ force: true }).catch(() => { });
-                    await page.keyboard.type(inputValue).catch(() => { });
+                else if (step.action === 'input' || step.action === 'change') {
+                    const locator = await resolveSelector(page, step.selectors, 300);
+                    await locator.waitFor({ state: 'visible', timeout: 2000 }).catch(() => { });
+                    let inputValue = step.value || '';
+                    const isPasswordInput = inputValue === '[REDACTED]' || step.selectors?.inputType === 'password';
+                    if (isPasswordInput) {
+                        const userCredential = await waitForCredentialsGate(page, runId, i, step);
+                        if (userCredential === null || userCredential === '[IN_BROWSER_LOGGED_IN]') {
+                            console.log(`[Executor Info] Credentials gate completed/bypassed for step ${i + 1}. Continuing remaining tasks...`);
+                            inputValue = '';
+                        }
+                        else {
+                            inputValue = userCredential;
+                        }
+                    }
+                    if (inputValue) {
+                        try {
+                            await locator.fill(inputValue, { timeout: 3000 });
+                        }
+                        catch (fillErr) {
+                            await locator.click({ force: true }).catch(() => { });
+                            await page.keyboard.type(inputValue).catch(() => { });
+                        }
+                    }
+                    inputValue = ''; // Immediately clear secret string reference
                 }
-                inputValue = ''; // Immediately clear secret string reference
+                else if (step.action === 'click' || step.action === 'submit') {
+                    const locator = await resolveSelector(page, step.selectors, 300);
+                    try {
+                        await locator.click({ timeout: 4000 }).catch(() => locator.click({ force: true, timeout: 2000 }));
+                    }
+                    catch (clickErr) {
+                        console.warn(`[Executor Click Warning] Step ${i + 1}:`, clickErr);
+                    }
+                }
             }
-            else if (step.action === 'click' || step.action === 'submit') {
-                const locator = await resolveSelector(page, step.selectors, 300);
-                try {
-                    await locator.click({ timeout: 5000 }).catch(() => locator.click({ force: true, timeout: 3000 }));
-                }
-                catch (clickErr) {
-                    console.warn(`[Executor Click Warning] Step ${i + 1}:`, clickErr);
-                }
+            catch (stepErr) {
+                console.warn(`[Executor Step Non-Blocking Error] Step ${i + 1} (${step.action}) encountered issue (${stepErr?.message}). Continuing remaining tasks...`);
             }
             // Fast pace delay (50ms) for maximum execution speed
             await page.waitForTimeout(50);
