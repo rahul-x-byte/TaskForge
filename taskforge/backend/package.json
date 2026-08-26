@@ -8,7 +8,7 @@
     "build": "tsc -p ../shared/tsconfig.json && tsc && node --input-type=module -e \"import fs from 'fs'; if(!fs.existsSync('dist/templates')) fs.mkdirSync('dist/templates',{recursive:true}); fs.cpSync('src/templates','dist/templates',{recursive:true});\"",
     "start": "node dist/index.js",
     "migrate": "tsx src/db/migrate.ts",
-    "create-admin": "tsx src/scripts/create-admin.ts",
+    "create-admin": "node dist/scripts/create-admin.js",
     "seed": "tsx src/seed.ts"
   },
   "dependencies": {
