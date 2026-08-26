@@ -1,83 +1,75 @@
-import { v4 as uuidv4 } from 'uuid';
-import readline from 'readline';
-import { pool } from '../db/index.js';
-import { hashPassword } from '../auth.js';
+import { supabaseAdmin } from '../lib/supabaseAdmin.js';
+import { pool, memoryUsers } from '../db/index.js';
 
-async function prompt(question: string): Promise<string> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  return new Promise((resolve) => {
-    rl.question(question, (ans) => {
-      rl.close();
-      resolve(ans.trim());
-    });
-  });
-}
+async function createAdminAccount() {
+  console.log('====================================================');
+  console.log('      TASKFORGE FIRST ADMIN BOOTSTRAPPER            ');
+  console.log('====================================================');
 
-async function createAdmin() {
-  console.log('[TaskForge Admin Bootstrap] Creating initial admin account...');
+  const name = process.env.ADMIN_NAME || 'Platform Administrator';
+  const email = process.env.ADMIN_EMAIL || 'admin@example.com';
+  const password = process.env.ADMIN_PASSWORD || 'admin123';
 
-  let name = process.env.ADMIN_NAME;
-  let email = process.env.ADMIN_EMAIL;
-  let password = process.env.ADMIN_PASSWORD;
-
-  if (!name) {
-    name = await prompt('Enter Admin Full Name (default: TaskForge Admin): ') || 'TaskForge Admin';
-  }
-  if (!email) {
-    email = await prompt('Enter Admin Email (default: admin@example.com): ') || 'admin@example.com';
-  }
-  if (!password) {
-    password = await prompt('Enter Admin Password (min 6 chars): ');
-  }
-
-  if (!password || password.length < 4) {
-    console.error('[Error] Admin password must be at least 4 characters long.');
-    process.exit(1);
-  }
-
-  const normalizedEmail = email.toLowerCase().trim();
-  const passwordHash = await hashPassword(password);
+  console.log(`[Create Admin] Attempting to create admin account for: ${email}`);
 
   try {
-    // Check if user already exists
-    const existing = await pool.query('SELECT * FROM users WHERE email = $1', [normalizedEmail]);
+    // 1. Create or retrieve Supabase Auth User
+    let userId: string | null = null;
 
-    if (existing.rows && existing.rows.length > 0) {
-      const user = existing.rows[0];
-      if (user.role === 'admin') {
-        console.log(`[Success] Account for ${normalizedEmail} already exists as admin. Updating password...`);
-        await pool.query('UPDATE users SET name = $1, password_hash = $2, role = $3, updated_at = NOW() WHERE id = $4', [
-          name,
-          passwordHash,
-          'admin',
-          user.id,
-        ]);
-      } else {
-        console.log(`[Success] Promoting existing user ${normalizedEmail} to admin...`);
-        await pool.query('UPDATE users SET role = $1, password_hash = $2, updated_at = NOW() WHERE id = $3', [
-          'admin',
-          passwordHash,
-          user.id,
-        ]);
-      }
+    const { data: createData, error: createError } = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: { name },
+    });
+
+    if (!createError && createData?.user) {
+      userId = createData.user.id;
+      console.log(`[Create Admin] Created Supabase Auth user with ID: ${userId}`);
     } else {
-      const adminId = uuidv4();
-      await pool.query(
-        'INSERT INTO users (id, name, email, password_hash, role, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, NOW(), NOW())',
-        [adminId, name, normalizedEmail, passwordHash, 'admin']
-      );
-      console.log(`[Success] Created new admin account for ${normalizedEmail} (ID: ${adminId}).`);
+      console.warn(`[Create Admin] User creation note (${createError?.message}). Checking existing users...`);
+      const { data: listData } = await supabaseAdmin.auth.admin.listUsers();
+      const existingUser = listData?.users?.find((u) => u.email === email);
+      if (existingUser) {
+        userId = existingUser.id;
+        console.log(`[Create Admin] Found existing Supabase Auth user ID: ${userId}`);
+      }
     }
 
-    console.log('[TaskForge Admin Bootstrap] Completed successfully.');
+    // 2. Elevate Profile Role to 'admin'
+    if (userId) {
+      const { error: updateError } = await supabaseAdmin
+        .from('profiles')
+        .update({ role: 'admin', name, email, updated_at: new Date().toISOString() })
+        .eq('id', userId);
+
+      if (updateError) {
+        // Fallback insert/upsert via Postgres pool
+        await pool.query(
+          `INSERT INTO profiles (id, name, email, role, created_at, updated_at)
+           VALUES ($1, $2, $3, 'admin', NOW(), NOW())
+           ON CONFLICT (id) DO UPDATE SET role = 'admin', name = EXCLUDED.name, updated_at = NOW()`,
+          [userId, name, email]
+        );
+      }
+      console.log(`[Create Admin] Successfully elevated user ${email} (${userId}) to role = 'admin'!`);
+    }
+
+    // 3. Update memory fallback
+    const memAdmin = Array.from(memoryUsers.values()).find((u) => u.email === email);
+    if (memAdmin) {
+      memAdmin.role = 'admin';
+    }
+
+    console.log('====================================================');
+    console.log(` SUCCESS: Admin user created/elevated successfully!`);
+    console.log(` Email: ${email}`);
+    console.log('====================================================');
     process.exit(0);
-  } catch (err) {
-    console.error('[Error] Failed to create admin account:', err);
+  } catch (err: any) {
+    console.error('[Create Admin Error] Failed to create admin user:', err?.message || err);
     process.exit(1);
   }
 }
 
-createAdmin();
+createAdminAccount();

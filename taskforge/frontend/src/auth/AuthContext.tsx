@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { supabase } from '../lib/supabase';
 import { API_BASE, setAuthToken, getAuthToken, UserItem } from '../api';
 
 export type User = UserItem;
@@ -35,60 +36,121 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [token, setTokenState] = useState<string | null>(getAuthToken());
   const [loading, setLoading] = useState<boolean>(true);
 
+  // Sync Supabase Auth state changes
   useEffect(() => {
-    const checkMe = async () => {
-      const currentToken = getAuthToken();
-      if (!currentToken) {
-        setLoading(false);
+    let isMounted = true;
+
+    const syncUserIdentity = async (sessionToken: string | null) => {
+      if (!sessionToken) {
+        if (isMounted) {
+          setUser(null);
+          setTokenState(null);
+          setAuthToken(null);
+          localStorage.removeItem('taskforge_auth_user');
+        }
         return;
       }
 
       try {
         const res = await fetch(`${API_BASE}/auth/me`, {
-          headers: { Authorization: `Bearer ${currentToken}` },
+          headers: { Authorization: `Bearer ${sessionToken}` },
         });
 
         if (res.ok) {
           const data = await res.json();
-          if (data.user) {
+          if (data.user && isMounted) {
             setUser(data.user);
+            setTokenState(sessionToken);
+            setAuthToken(sessionToken);
             localStorage.setItem('taskforge_auth_user', JSON.stringify(data.user));
           }
-        } else {
-          logout();
         }
       } catch (e) {
-        console.warn('[AuthContext] Error checking user identity:', e);
-      } finally {
-        setLoading(false);
+        console.warn('[AuthContext] Error syncing user identity:', e);
       }
     };
 
-    checkMe();
+    // 1. Initial Session Check
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.access_token) {
+        syncUserIdentity(session.access_token);
+      } else {
+        const storedToken = getAuthToken();
+        if (storedToken) syncUserIdentity(storedToken);
+      }
+      if (isMounted) setLoading(false);
+    });
+
+    // 2. Auth State Change Listener
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.access_token) {
+        syncUserIdentity(session.access_token);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const login = async (email: string, password: string): Promise<User> => {
-    const res = await fetch(`${API_BASE}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
+    // 1. Authenticate with Supabase Auth
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
     });
 
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || 'Login failed');
+    let sessionToken = authData?.session?.access_token || null;
+
+    if (authError || !sessionToken) {
+      // Fallback via backend API
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || data.message || 'Login failed');
+
+      sessionToken = data.token;
+      setAuthToken(sessionToken);
+      setTokenState(sessionToken);
+      setUser(data.user);
+      localStorage.setItem('taskforge_auth_user', JSON.stringify(data.user));
+      return data.user;
     }
 
-    const authResp: AuthResponse = data;
-    setAuthToken(authResp.token);
-    setTokenState(authResp.token);
-    setUser(authResp.user);
-    localStorage.setItem('taskforge_auth_user', JSON.stringify(authResp.user));
+    // 2. Fetch User Profile
+    const meRes = await fetch(`${API_BASE}/auth/me`, {
+      headers: { Authorization: `Bearer ${sessionToken}` },
+    });
 
-    return authResp.user;
+    if (!meRes.ok) throw new Error('Could not fetch user profile after login.');
+    const meData = await meRes.json();
+
+    setAuthToken(sessionToken);
+    setTokenState(sessionToken);
+    setUser(meData.user);
+    localStorage.setItem('taskforge_auth_user', JSON.stringify(meData.user));
+
+    return meData.user;
   };
 
   const register = async (name: string, email: string, password: string): Promise<User> => {
+    // 1. Supabase Auth Registration (Role is ALWAYS forced to 'user')
+    const { data: signUpData } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: { name },
+      },
+    });
+
+    let sessionToken = signUpData?.session?.access_token || null;
+
+    // 2. Backend Fallback Registration
     const res = await fetch(`${API_BASE}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -96,20 +158,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || 'Registration failed');
-    }
+    if (!res.ok) throw new Error(data.error || data.message || 'Registration failed');
 
-    const authResp: AuthResponse = data;
-    setAuthToken(authResp.token);
-    setTokenState(authResp.token);
-    setUser(authResp.user);
-    localStorage.setItem('taskforge_auth_user', JSON.stringify(authResp.user));
+    sessionToken = data.token || sessionToken;
+    setAuthToken(sessionToken);
+    setTokenState(sessionToken);
+    setUser(data.user);
+    localStorage.setItem('taskforge_auth_user', JSON.stringify(data.user));
 
-    return authResp.user;
+    return data.user;
   };
 
-  const logout = () => {
+  const logout = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {}
+
     setAuthToken(null);
     setTokenState(null);
     setUser(null);

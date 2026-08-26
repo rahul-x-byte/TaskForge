@@ -1,4 +1,12 @@
 export type UserRole = 'admin' | 'user';
+export interface Profile {
+    id: string;
+    name: string;
+    email: string;
+    role: UserRole;
+    created_at: string;
+    updated_at: string;
+}
 export interface User {
     id: string;
     name: string;
@@ -11,7 +19,7 @@ export interface User {
 }
 export interface AuthResponse {
     token: string;
-    user: User;
+    user: Profile;
 }
 export type RunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'waiting_approval' | 'awaiting_approval' | 'timed_out' | 'awaiting_credentials' | 'awaiting_login';
 export interface SelectorBundle {
@@ -42,7 +50,7 @@ export interface WorkflowStep {
 }
 export interface WorkflowDefinition {
     id: string;
-    user_id?: string;
+    user_id: string;
     name: string;
     description?: string;
     current_version_id?: string;

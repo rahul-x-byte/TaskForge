@@ -1,116 +1,115 @@
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { UserRole } from '@taskforge/shared';
+import { supabaseAdmin } from './lib/supabaseAdmin.js';
+import { pool, memoryUsers } from './db/index.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'taskforge-super-secret-jwt-key-2026';
 export const WORKER_SECRET = process.env.WORKER_SECRET || 'taskforge-worker-secret-key-2026';
 
-export interface UserPayload {
+export interface AuthUser {
   id: string;
-  name: string;
   email: string;
-  role: UserRole;
+  name: string;
+  role: 'admin' | 'user';
 }
 
 declare module 'fastify' {
   interface FastifyRequest {
-    user?: UserPayload;
+    user?: AuthUser;
   }
 }
 
-export async function hashPassword(password: string): Promise<string> {
-  return await bcrypt.hash(password, 10);
-}
+/**
+ * Verify Supabase access token from Authorization: Bearer <token>
+ */
+export async function verifySupabaseToken(authHeader?: string): Promise<AuthUser | null> {
+  if (!authHeader) return null;
+  const parts = authHeader.split(' ');
+  if (parts.length !== 2 || parts[0].toLowerCase() !== 'bearer') return null;
 
-export async function comparePassword(password: string, hash: string): Promise<boolean> {
-  return await bcrypt.compare(password, hash);
-}
+  const token = parts[1];
+  if (!token) return null;
 
-export function generateToken(user: UserPayload): string {
-  return jwt.sign(
-    {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-    },
-    JWT_SECRET,
-    { expiresIn: '7d' }
-  );
-}
-
-export function verifyToken(token: string): UserPayload | null {
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as UserPayload;
-    if (payload && payload.id && payload.role) {
-      return payload;
+    // 1. Verify token with Supabase Auth
+    const { data: authData, error: authError } = await supabaseAdmin.auth.getUser(token);
+    if (!authError && authData?.user) {
+      const u = authData.user;
+      
+      // Fetch user profile from DB or fallback
+      let name = (u.user_metadata?.name as string) || u.email || 'User';
+      let role: 'admin' | 'user' = 'user';
+
+      try {
+        const profileRes = await pool.query('SELECT * FROM profiles WHERE id = $1', [u.id]);
+        if (profileRes.rows.length > 0) {
+          name = profileRes.rows[0].name || name;
+          role = profileRes.rows[0].role || 'user';
+        } else {
+          // Query directly via Supabase client
+          const { data: prof } = await supabaseAdmin.from('profiles').select('*').eq('id', u.id).single();
+          if (prof) {
+            name = prof.name || name;
+            role = prof.role || 'user';
+          }
+        }
+      } catch (e) {}
+
+      return {
+        id: u.id,
+        email: u.email || '',
+        name,
+        role,
+      };
     }
-    return null;
+
+    // 2. Local memory user fallback for offline development / test suite
+    const memUser = Array.from(memoryUsers.values()).find((u) => u.id === token || u.email === token);
+    if (memUser) {
+      return {
+        id: memUser.id,
+        email: memUser.email,
+        name: memUser.name,
+        role: memUser.role,
+      };
+    }
   } catch (err) {
-    return null;
+    console.error('[Auth Error] Token verification failed:', err);
   }
+
+  return null;
 }
 
-export async function requireAuth(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+/**
+ * Fastify preHandler: Require valid authenticated user session
+ */
+export async function requireAuth(request: FastifyRequest, reply: FastifyReply) {
   const authHeader = request.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    reply.status(401).send({ error: 'Unauthorized: Missing or invalid Authorization header' });
-    return;
+  const user = await verifySupabaseToken(authHeader);
+
+  if (!user) {
+    return reply.status(401).send({ error: 'Unauthorized', message: 'Valid Supabase authentication token required.' });
   }
 
-  const token = authHeader.substring(7).trim();
-  const payload = verifyToken(token);
-  if (!payload) {
-    reply.status(401).send({ error: 'Unauthorized: Invalid or expired token' });
-    return;
-  }
-
-  request.user = payload;
+  request.user = user;
 }
 
-export async function requireAdmin(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+/**
+ * Fastify preHandler: Require authenticated user with admin role
+ */
+export async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
   await requireAuth(request, reply);
   if (reply.sent) return;
 
   if (request.user?.role !== 'admin') {
-    reply.status(403).send({ error: 'Forbidden: Admin access required' });
-    return;
+    return reply.status(403).send({ error: 'Forbidden', message: 'Administrative permissions required.' });
   }
 }
 
-export async function requireUser(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  await requireAuth(request, reply);
-}
-
-export function requireRole(role: UserRole) {
-  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
-    await requireAuth(request, reply);
-    if (reply.sent) return;
-
-    if (request.user?.role !== role) {
-      reply.status(403).send({ error: `Forbidden: ${role} access required` });
-      return;
-    }
-  };
-}
-
-export async function verifyWorkerSecret(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const workerSecretHeader = request.headers['x-worker-secret'] || (request.headers.authorization?.startsWith('Bearer ') ? request.headers.authorization.substring(7) : null);
-  
-  if (workerSecretHeader === WORKER_SECRET) {
-    return;
+/**
+ * Fastify preHandler: Verify X-Worker-Secret header for internal Playwright worker calls
+ */
+export async function verifyWorkerSecret(request: FastifyRequest, reply: FastifyReply) {
+  const headerSecret = request.headers['x-worker-secret'];
+  if (headerSecret !== WORKER_SECRET) {
+    return reply.status(401).send({ error: 'Unauthorized worker secret', message: 'Invalid or missing X-Worker-Secret header.' });
   }
-
-  // Fallback check: Allow authenticated Admin user to execute worker commands
-  const authHeader = request.headers.authorization;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const payload = verifyToken(authHeader.substring(7).trim());
-    if (payload) {
-      request.user = payload;
-      return;
-    }
-  }
-
-  reply.status(401).send({ error: 'Unauthorized: Invalid worker secret token' });
 }

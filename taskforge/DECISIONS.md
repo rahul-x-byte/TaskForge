@@ -97,20 +97,16 @@
 
 ---
 
-## ADR-014: Role-Based Access Control (RBAC) & IDOR Security System
+---
+
+## ADR-015: Supabase Auth + PostgreSQL Row Level Security (RLS) as Security Source of Truth
 - **Status**: Approved & Implemented
-- **Context**: Multi-tenant deployments require strict resource separation between users, while administrators require platform-wide access, user account management, and system execution metrics.
+- **Context**: Multi-user cloud automation platforms require hardware-level database row isolation so that normal users cannot query or mutate each other's workflows, versions, execution runs, or schedules.
 - **Decision**: 
-  1. Define PostgreSQL enum `user_role` (`'admin'`, `'user'`) and `users` table (`id`, `name`, `email`, `password_hash`, `role`, `created_at`, `updated_at`).
-  2. Associate `workflows` with `user_id` (`ON DELETE CASCADE`).
-  3. Restrict `POST /api/auth/register` to always force `role = 'user'`.
-  4. Provide initial admin bootstrapper script (`npm run create-admin`).
-  5. Protect all non-admin routes with IDOR ownership validation (`user_id = request.user.id`).
-  6. Restrict admin operations (`GET/POST/PUT/DELETE /api/admin/*`) with `requireAdmin` middleware.
-  7. Implement Admin Self-Lockout protection preventing deletion or demotion of the last remaining admin account.
-  8. Authenticate worker service requests (`/api/runs/pending`, `/api/runs/:id/claim`, etc.) using `X-Worker-Secret` header token validation.
-- **Consequences**: Guarantees complete data privacy and isolation for normal users while providing comprehensive administrative oversight.
-- **Status**: Approved & Implemented
-- **Context**: Hardcoded production backend fallbacks break whenever a user deletes and recreates a Render Blueprint with a new URL.
-- **Decision**: Add an interactive **Backend Connected ⚙️** pill in `Navbar.tsx` allowing 1-click URL configuration saved in browser `localStorage` under `taskforge_api_base`.
-- **Consequences**: Users can switch or update backend API URLs directly on the live Vercel dashboard without rebuilding or re-deploying code.
+  1. Adopt Supabase Auth (`auth.users`) and PostgreSQL Row Level Security (RLS) as the single authoritative source of truth for authentication and data authorization across the monorepo.
+  2. Maintain `public.profiles` (`id UUID REFERENCES auth.users(id) ON DELETE CASCADE`, `name`, `email`, `role CHECK (role IN ('user', 'admin'))`).
+  3. Create automatic PostgreSQL trigger `handle_new_user()` on `auth.users` `AFTER INSERT` establishing default `role = 'user'`.
+  4. Create non-recursive `is_admin()` SQL function with `SECURITY DEFINER SET search_path = public` for RLS policy evaluations.
+  5. Enable RLS on `profiles`, `workflows`, `workflow_versions`, `runs`, `schedules` enforcing `workflows.user_id = auth.uid()` for normal users and platform access for admins.
+  6. Enforce server-only isolation of `SUPABASE_SECRET_KEY` on backend/server components; expose only `VITE_SUPABASE_PUBLISHABLE_KEY` to client frontend/extension.
+- **Consequences**: Provides defense-in-depth where database RLS blocks unauthorized queries even if application API layers are bypassed.

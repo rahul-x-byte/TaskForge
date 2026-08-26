@@ -7,11 +7,12 @@ export const memoryVersions = new Map();
 export const memoryRuns = new Map();
 export const memoryRunSteps = new Map();
 // Seed default users in memory at startup
+// Seed default users & profiles in memory at startup
 const adminPasswordHash = bcrypt.hashSync('admin123', 10);
 const userPasswordHash = bcrypt.hashSync('user123', 10);
-const defaultAdminId = 'admin-user-id-100';
-const defaultUserId = 'default-user-id-200';
-memoryUsers.set('admin@example.com', {
+const defaultAdminId = 'u-admin-seed-001';
+const defaultUserId = 'u-user-seed-002';
+const defaultAdminUser = {
     id: defaultAdminId,
     name: 'TaskForge Admin',
     email: 'admin@example.com',
@@ -19,8 +20,8 @@ memoryUsers.set('admin@example.com', {
     role: 'admin',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-});
-memoryUsers.set('user@example.com', {
+};
+const defaultNormalUser = {
     id: defaultUserId,
     name: 'Default User',
     email: 'user@example.com',
@@ -28,7 +29,11 @@ memoryUsers.set('user@example.com', {
     role: 'user',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-});
+};
+memoryUsers.set(defaultAdminId, defaultAdminUser);
+memoryUsers.set('admin@example.com', defaultAdminUser);
+memoryUsers.set(defaultUserId, defaultNormalUser);
+memoryUsers.set('user@example.com', defaultNormalUser);
 // Pre-populate initial sample workflow at backend startup
 const initialWfId = 'sample-automated-download-workflow';
 const initialVerId = 'sample-automated-download-version';
@@ -42,36 +47,23 @@ const initialSteps = [
     },
     {
         action: 'input',
-        timestamp: Date.now() + 100,
-        selectors: { css: '#username', role: 'textbox', name: 'Username' },
+        timestamp: Date.now() + 1000,
+        selectors: { css: 'input[name="username"]' },
         value: 'admin',
         pageUrl: 'http://localhost:3001/login',
     },
     {
-        action: 'input',
-        timestamp: Date.now() + 200,
-        selectors: { css: '#password', role: 'textbox', name: 'Password' },
-        value: '[REDACTED]',
-        pageUrl: 'http://localhost:3001/login',
-    },
-    {
         action: 'click',
+        timestamp: Date.now() + 2000,
+        selectors: { css: 'button[type="submit"]' },
+        pageUrl: 'http://localhost:3001/login',
         isSensitive: true,
-        timestamp: Date.now() + 300,
-        selectors: { css: '#login-submit', role: 'button', name: 'Login' },
-        pageUrl: 'http://localhost:3001/login',
-    },
-    {
-        action: 'click',
-        timestamp: Date.now() + 400,
-        selectors: { css: '#download-report-btn', role: 'link', name: 'Download Report', text: 'Download Report' },
-        pageUrl: 'http://localhost:3001/reports',
     },
 ];
 memoryWorkflows.set(initialWfId, {
     id: initialWfId,
+    name: 'Automated Sample Report Download',
     user_id: defaultUserId,
-    name: 'Sample Automated Report Download Workflow',
     created_at: new Date().toISOString(),
     current_version_id: initialVerId,
 });
@@ -100,37 +92,42 @@ export async function query(text, params = []) {
         }
     }
     const normalizedSql = text.trim().toLowerCase();
-    // --- USERS TABLE QUERIES ---
-    // 1. INSERT INTO users
-    if (normalizedSql.startsWith('insert into users')) {
-        const [id, name, email, password_hash, role] = params;
+    // --- PROFILES / USERS TABLE QUERIES ---
+    // 1. INSERT INTO profiles / users
+    if (normalizedSql.startsWith('insert into profiles') || normalizedSql.startsWith('insert into users')) {
+        const id = params[0];
+        const name = params[1];
+        const email = params[2];
+        const role = params[3] || 'user';
         const item = {
             id,
             name,
-            email: email.toLowerCase(),
-            password_hash,
-            role: role || 'user',
+            email: (email || '').toLowerCase(),
+            role,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
         };
-        memoryUsers.set(email.toLowerCase(), item);
+        memoryUsers.set(id, item);
+        if (email)
+            memoryUsers.set(email.toLowerCase(), item);
         return { rows: [item] };
     }
-    // 2. SELECT FROM users WHERE email = $1
-    if (normalizedSql.includes('from users') && normalizedSql.includes('where email =')) {
+    // 2. SELECT FROM profiles / users WHERE email = $1
+    if ((normalizedSql.includes('from profiles') || normalizedSql.includes('from users')) && normalizedSql.includes('where email =')) {
         const emailVal = (params[0] || '').toLowerCase();
-        const user = memoryUsers.get(emailVal);
+        const user = memoryUsers.get(emailVal) || Array.from(memoryUsers.values()).find((u) => u.email === emailVal);
         return { rows: user ? [user] : [] };
     }
-    // 3. SELECT FROM users WHERE id = $1
-    if (normalizedSql.includes('from users') && normalizedSql.includes('where id =')) {
+    // 3. SELECT FROM profiles / users WHERE id = $1
+    if ((normalizedSql.includes('from profiles') || normalizedSql.includes('from users')) && (normalizedSql.includes('where id =') || normalizedSql.includes('where p.id ='))) {
         const idVal = params[0];
-        const user = Array.from(memoryUsers.values()).find((u) => u.id === idVal);
+        const user = memoryUsers.get(idVal) || Array.from(memoryUsers.values()).find((u) => u.id === idVal);
         return { rows: user ? [user] : [] };
     }
-    // 4. SELECT FROM users (list all users with workflow count & run count)
-    if (normalizedSql.includes('from users')) {
-        const list = Array.from(memoryUsers.values()).map((u) => {
+    // 4. SELECT FROM profiles / users (list all profiles with workflow count & run count)
+    if (normalizedSql.includes('from profiles') || normalizedSql.includes('from users')) {
+        const uniqueUsers = Array.from(new Set(Array.from(memoryUsers.values())));
+        const list = uniqueUsers.map((u) => {
             const userWorkflows = Array.from(memoryWorkflows.values()).filter((w) => w.user_id === u.id);
             const userWfIds = new Set(userWorkflows.map((w) => w.id));
             const userRuns = Array.from(memoryRuns.values()).filter((r) => userWfIds.has(r.workflow_id));
@@ -142,42 +139,45 @@ export async function query(text, params = []) {
         });
         return { rows: list };
     }
-    // 5. UPDATE users SET role
-    if (normalizedSql.startsWith('update users set role')) {
+    // 5. UPDATE profiles / users SET role
+    if (normalizedSql.startsWith('update profiles set role') || normalizedSql.startsWith('update users set role')) {
         const [roleVal, idVal] = params;
-        const user = Array.from(memoryUsers.values()).find((u) => u.id === idVal);
+        const user = memoryUsers.get(idVal) || Array.from(memoryUsers.values()).find((u) => u.id === idVal);
         if (user) {
             user.role = roleVal;
             user.updated_at = new Date().toISOString();
-            memoryUsers.set(user.email.toLowerCase(), user);
+            memoryUsers.set(idVal, user);
+            if (user.email)
+                memoryUsers.set(user.email.toLowerCase(), user);
             return { rows: [user] };
         }
         return { rows: [] };
     }
-    // 6. UPDATE users SET name = $1, email = $2
-    if (normalizedSql.startsWith('update users set')) {
+    // 6. UPDATE profiles / users
+    if (normalizedSql.startsWith('update profiles set') || normalizedSql.startsWith('update users set')) {
         const [nameVal, emailVal, roleVal, idVal] = params;
-        const user = Array.from(memoryUsers.values()).find((u) => u.id === idVal);
+        const targetId = idVal || params[params.length - 1];
+        const user = memoryUsers.get(targetId) || Array.from(memoryUsers.values()).find((u) => u.id === targetId);
         if (user) {
-            if (user.email !== emailVal.toLowerCase()) {
-                memoryUsers.delete(user.email.toLowerCase());
-            }
             user.name = nameVal || user.name;
-            user.email = emailVal ? emailVal.toLowerCase() : user.email;
+            if (emailVal)
+                user.email = emailVal.toLowerCase();
             if (roleVal)
                 user.role = roleVal;
             user.updated_at = new Date().toISOString();
-            memoryUsers.set(user.email.toLowerCase(), user);
+            memoryUsers.set(targetId, user);
             return { rows: [user] };
         }
         return { rows: [] };
     }
-    // 7. DELETE FROM users WHERE id = $1
-    if (normalizedSql.startsWith('delete from users')) {
+    // 7. DELETE FROM profiles / users WHERE id = $1
+    if (normalizedSql.startsWith('delete from profiles') || normalizedSql.startsWith('delete from users')) {
         const idVal = params[0];
-        const user = Array.from(memoryUsers.values()).find((u) => u.id === idVal);
+        const user = memoryUsers.get(idVal) || Array.from(memoryUsers.values()).find((u) => u.id === idVal);
         if (user) {
-            memoryUsers.delete(user.email.toLowerCase());
+            memoryUsers.delete(idVal);
+            if (user.email)
+                memoryUsers.delete(user.email.toLowerCase());
             // Cascade delete user workflows and runs
             const userWfs = Array.from(memoryWorkflows.values()).filter((w) => w.user_id === idVal);
             userWfs.forEach((w) => {
