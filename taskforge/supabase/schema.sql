@@ -94,6 +94,11 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
+-- Revoke default public EXECUTE permissions on SECURITY DEFINER functions to eliminate Security Advisor warnings
+REVOKE EXECUTE ON FUNCTION public.handle_new_user() FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.is_admin() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated;
+
 -- 8. Enable Row Level Security (RLS) on all tables
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.workflows ENABLE ROW LEVEL SECURITY;
