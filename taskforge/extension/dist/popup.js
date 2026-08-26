@@ -5,17 +5,27 @@ document.addEventListener('DOMContentLoaded', () => {
     const actionCount = document.getElementById('action-count');
     const backendUrlInput = document.getElementById('backend-url-input');
     const syncMsg = document.getElementById('sync-msg');
+    const authTokenInput = document.getElementById('auth-token-input');
     const DEFAULT_BACKEND_URL = 'https://taskforge-backend-ta4i.onrender.com/api/recordings';
-    // Load saved backend URL or set default
-    chrome.storage.local.get(['backendUrl'], (result) => {
+    // Load saved backend URL & authToken or set default
+    chrome.storage.local.get(['backendUrl', 'authToken'], (result) => {
         if (backendUrlInput) {
             backendUrlInput.value = result.backendUrl || DEFAULT_BACKEND_URL;
+        }
+        if (authTokenInput) {
+            authTokenInput.value = result.authToken || '';
         }
     });
     if (backendUrlInput) {
         backendUrlInput.addEventListener('change', () => {
             const val = backendUrlInput.value.trim() || DEFAULT_BACKEND_URL;
             chrome.storage.local.set({ backendUrl: val });
+        });
+    }
+    if (authTokenInput) {
+        authTokenInput.addEventListener('change', () => {
+            const val = authTokenInput.value.trim();
+            chrome.storage.local.set({ authToken: val });
         });
     }
     function updateUI(isRecording, count) {
@@ -44,13 +54,17 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!workflowsList)
             return;
         try {
-            const storage = await chrome.storage.local.get(['backendUrl']);
+            const storage = await chrome.storage.local.get(['backendUrl', 'authToken']);
             let base = (storage.backendUrl || DEFAULT_BACKEND_URL).trim().replace(/\/+$/, '');
             if (base.endsWith('/recordings'))
                 base = base.replace(/\/recordings$/, '');
             if (!base.endsWith('/api'))
                 base = `${base}/api`;
-            const res = await fetch(`${base}/workflows`).catch(() => null);
+            const headers = {};
+            if (storage.authToken) {
+                headers['Authorization'] = `Bearer ${storage.authToken}`;
+            }
+            const res = await fetch(`${base}/workflows`, { headers }).catch(() => null);
             if (res && res.ok) {
                 const data = await res.json();
                 const list = Array.isArray(data) ? data : [];

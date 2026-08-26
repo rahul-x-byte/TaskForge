@@ -97,7 +97,19 @@
 
 ---
 
-## ADR-012: Dynamic Frontend Backend URL Configurator
+## ADR-014: Role-Based Access Control (RBAC) & IDOR Security System
+- **Status**: Approved & Implemented
+- **Context**: Multi-tenant deployments require strict resource separation between users, while administrators require platform-wide access, user account management, and system execution metrics.
+- **Decision**: 
+  1. Define PostgreSQL enum `user_role` (`'admin'`, `'user'`) and `users` table (`id`, `name`, `email`, `password_hash`, `role`, `created_at`, `updated_at`).
+  2. Associate `workflows` with `user_id` (`ON DELETE CASCADE`).
+  3. Restrict `POST /api/auth/register` to always force `role = 'user'`.
+  4. Provide initial admin bootstrapper script (`npm run create-admin`).
+  5. Protect all non-admin routes with IDOR ownership validation (`user_id = request.user.id`).
+  6. Restrict admin operations (`GET/POST/PUT/DELETE /api/admin/*`) with `requireAdmin` middleware.
+  7. Implement Admin Self-Lockout protection preventing deletion or demotion of the last remaining admin account.
+  8. Authenticate worker service requests (`/api/runs/pending`, `/api/runs/:id/claim`, etc.) using `X-Worker-Secret` header token validation.
+- **Consequences**: Guarantees complete data privacy and isolation for normal users while providing comprehensive administrative oversight.
 - **Status**: Approved & Implemented
 - **Context**: Hardcoded production backend fallbacks break whenever a user deletes and recreates a Render Blueprint with a new URL.
 - **Decision**: Add an interactive **Backend Connected ⚙️** pill in `Navbar.tsx` allowing 1-click URL configuration saved in browser `localStorage` under `taskforge_api_base`.

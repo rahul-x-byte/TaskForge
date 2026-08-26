@@ -5,12 +5,17 @@ document.addEventListener('DOMContentLoaded', () => {
   const backendUrlInput = document.getElementById('backend-url-input') as HTMLInputElement;
   const syncMsg = document.getElementById('sync-msg') as HTMLDivElement;
 
+  const authTokenInput = document.getElementById('auth-token-input') as HTMLInputElement;
+
   const DEFAULT_BACKEND_URL = 'https://taskforge-backend-ta4i.onrender.com/api/recordings';
 
-  // Load saved backend URL or set default
-  chrome.storage.local.get(['backendUrl'], (result) => {
+  // Load saved backend URL & authToken or set default
+  chrome.storage.local.get(['backendUrl', 'authToken'], (result) => {
     if (backendUrlInput) {
       backendUrlInput.value = result.backendUrl || DEFAULT_BACKEND_URL;
+    }
+    if (authTokenInput) {
+      authTokenInput.value = result.authToken || '';
     }
   });
 
@@ -18,6 +23,13 @@ document.addEventListener('DOMContentLoaded', () => {
     backendUrlInput.addEventListener('change', () => {
       const val = backendUrlInput.value.trim() || DEFAULT_BACKEND_URL;
       chrome.storage.local.set({ backendUrl: val });
+    });
+  }
+
+  if (authTokenInput) {
+    authTokenInput.addEventListener('change', () => {
+      const val = authTokenInput.value.trim();
+      chrome.storage.local.set({ authToken: val });
     });
   }
 
@@ -48,12 +60,17 @@ document.addEventListener('DOMContentLoaded', () => {
   async function loadWorkflows() {
     if (!workflowsList) return;
     try {
-      const storage = await chrome.storage.local.get(['backendUrl']);
+      const storage = await chrome.storage.local.get(['backendUrl', 'authToken']);
       let base = (storage.backendUrl || DEFAULT_BACKEND_URL).trim().replace(/\/+$/, '');
       if (base.endsWith('/recordings')) base = base.replace(/\/recordings$/, '');
       if (!base.endsWith('/api')) base = `${base}/api`;
 
-      const res = await fetch(`${base}/workflows`).catch(() => null);
+      const headers: Record<string, string> = {};
+      if (storage.authToken) {
+        headers['Authorization'] = `Bearer ${storage.authToken}`;
+      }
+
+      const res = await fetch(`${base}/workflows`, { headers }).catch(() => null);
       if (res && res.ok) {
         const data: any = await res.json();
         const list = Array.isArray(data) ? data : [];

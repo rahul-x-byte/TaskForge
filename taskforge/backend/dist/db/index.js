@@ -1,8 +1,34 @@
 // Database Manager with Postgres & Memory Fallback Engine
-const memoryWorkflows = new Map();
-const memoryVersions = new Map();
-const memoryRuns = new Map();
-const memoryRunSteps = new Map();
+import pg from 'pg';
+import bcrypt from 'bcryptjs';
+export const memoryUsers = new Map();
+export const memoryWorkflows = new Map();
+export const memoryVersions = new Map();
+export const memoryRuns = new Map();
+export const memoryRunSteps = new Map();
+// Seed default users in memory at startup
+const adminPasswordHash = bcrypt.hashSync('admin123', 10);
+const userPasswordHash = bcrypt.hashSync('user123', 10);
+const defaultAdminId = 'admin-user-id-100';
+const defaultUserId = 'default-user-id-200';
+memoryUsers.set('admin@example.com', {
+    id: defaultAdminId,
+    name: 'TaskForge Admin',
+    email: 'admin@example.com',
+    password_hash: adminPasswordHash,
+    role: 'admin',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+});
+memoryUsers.set('user@example.com', {
+    id: defaultUserId,
+    name: 'Default User',
+    email: 'user@example.com',
+    password_hash: userPasswordHash,
+    role: 'user',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+});
 // Pre-populate initial sample workflow at backend startup
 const initialWfId = 'sample-automated-download-workflow';
 const initialVerId = 'sample-automated-download-version';
@@ -44,6 +70,7 @@ const initialSteps = [
 ];
 memoryWorkflows.set(initialWfId, {
     id: initialWfId,
+    user_id: defaultUserId,
     name: 'Sample Automated Report Download Workflow',
     created_at: new Date().toISOString(),
     current_version_id: initialVerId,
@@ -54,16 +81,125 @@ memoryVersions.set(initialVerId, {
     steps: initialSteps,
     created_at: new Date().toISOString(),
 });
+// Postgres Pool Connection (if DATABASE_URL is configured)
+let pgPool = null;
+if (process.env.DATABASE_URL) {
+    pgPool = new pg.Pool({
+        connectionString: process.env.DATABASE_URL,
+        ssl: process.env.DATABASE_URL.includes('localhost') || process.env.DATABASE_URL.includes('127.0.0.1') ? false : { rejectUnauthorized: false },
+    });
+}
 export async function query(text, params = []) {
+    if (pgPool) {
+        try {
+            const res = await pgPool.query(text, params);
+            return res;
+        }
+        catch (pgErr) {
+            console.warn('[Postgres Query Fallback to Memory Engine]', pgErr);
+        }
+    }
     const normalizedSql = text.trim().toLowerCase();
-    // 1. INSERT INTO workflows
+    // --- USERS TABLE QUERIES ---
+    // 1. INSERT INTO users
+    if (normalizedSql.startsWith('insert into users')) {
+        const [id, name, email, password_hash, role] = params;
+        const item = {
+            id,
+            name,
+            email: email.toLowerCase(),
+            password_hash,
+            role: role || 'user',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+        };
+        memoryUsers.set(email.toLowerCase(), item);
+        return { rows: [item] };
+    }
+    // 2. SELECT FROM users WHERE email = $1
+    if (normalizedSql.includes('from users') && normalizedSql.includes('where email =')) {
+        const emailVal = (params[0] || '').toLowerCase();
+        const user = memoryUsers.get(emailVal);
+        return { rows: user ? [user] : [] };
+    }
+    // 3. SELECT FROM users WHERE id = $1
+    if (normalizedSql.includes('from users') && normalizedSql.includes('where id =')) {
+        const idVal = params[0];
+        const user = Array.from(memoryUsers.values()).find((u) => u.id === idVal);
+        return { rows: user ? [user] : [] };
+    }
+    // 4. SELECT FROM users (list all users with workflow count & run count)
+    if (normalizedSql.includes('from users')) {
+        const list = Array.from(memoryUsers.values()).map((u) => {
+            const userWorkflows = Array.from(memoryWorkflows.values()).filter((w) => w.user_id === u.id);
+            const userWfIds = new Set(userWorkflows.map((w) => w.id));
+            const userRuns = Array.from(memoryRuns.values()).filter((r) => userWfIds.has(r.workflow_id));
+            return {
+                ...u,
+                workflow_count: userWorkflows.length,
+                run_count: userRuns.length,
+            };
+        });
+        return { rows: list };
+    }
+    // 5. UPDATE users SET role
+    if (normalizedSql.startsWith('update users set role')) {
+        const [roleVal, idVal] = params;
+        const user = Array.from(memoryUsers.values()).find((u) => u.id === idVal);
+        if (user) {
+            user.role = roleVal;
+            user.updated_at = new Date().toISOString();
+            memoryUsers.set(user.email.toLowerCase(), user);
+            return { rows: [user] };
+        }
+        return { rows: [] };
+    }
+    // 6. UPDATE users SET name = $1, email = $2
+    if (normalizedSql.startsWith('update users set')) {
+        const [nameVal, emailVal, roleVal, idVal] = params;
+        const user = Array.from(memoryUsers.values()).find((u) => u.id === idVal);
+        if (user) {
+            if (user.email !== emailVal.toLowerCase()) {
+                memoryUsers.delete(user.email.toLowerCase());
+            }
+            user.name = nameVal || user.name;
+            user.email = emailVal ? emailVal.toLowerCase() : user.email;
+            if (roleVal)
+                user.role = roleVal;
+            user.updated_at = new Date().toISOString();
+            memoryUsers.set(user.email.toLowerCase(), user);
+            return { rows: [user] };
+        }
+        return { rows: [] };
+    }
+    // 7. DELETE FROM users WHERE id = $1
+    if (normalizedSql.startsWith('delete from users')) {
+        const idVal = params[0];
+        const user = Array.from(memoryUsers.values()).find((u) => u.id === idVal);
+        if (user) {
+            memoryUsers.delete(user.email.toLowerCase());
+            // Cascade delete user workflows and runs
+            const userWfs = Array.from(memoryWorkflows.values()).filter((w) => w.user_id === idVal);
+            userWfs.forEach((w) => {
+                memoryWorkflows.delete(w.id);
+                const wRuns = Array.from(memoryRuns.values()).filter((r) => r.workflow_id === w.id);
+                wRuns.forEach((r) => memoryRuns.delete(r.id));
+            });
+            return { rows: [user] };
+        }
+        return { rows: [] };
+    }
+    // --- WORKFLOWS TABLE QUERIES ---
+    // 8. INSERT INTO workflows
     if (normalizedSql.startsWith('insert into workflows')) {
-        const [id, name] = params;
-        const item = { id, name, created_at: new Date().toISOString(), current_version_id: null };
+        const id = params[0];
+        const name = params[1];
+        const userId = params[2] || defaultUserId;
+        const item = { id, name, user_id: userId, created_at: new Date().toISOString(), current_version_id: null };
         memoryWorkflows.set(id, item);
         return { rows: [item] };
     }
-    // 2. INSERT INTO workflow_versions
+    // 9. INSERT INTO workflow_versions
     if (normalizedSql.startsWith('insert into workflow_versions')) {
         const [id, workflow_id, steps] = params;
         const stepsArr = typeof steps === 'string' ? JSON.parse(steps) : steps;
@@ -71,7 +207,7 @@ export async function query(text, params = []) {
         memoryVersions.set(id, item);
         return { rows: [item] };
     }
-    // 3. UPDATE workflows SET current_version_id
+    // 10. UPDATE workflows SET current_version_id
     if (normalizedSql.startsWith('update workflows set current_version_id')) {
         const [versionId, workflowId] = params;
         const wf = memoryWorkflows.get(workflowId);
@@ -81,7 +217,7 @@ export async function query(text, params = []) {
         }
         return { rows: wf ? [wf] : [] };
     }
-    // 3b. UPDATE workflow_versions SET steps
+    // 11. UPDATE workflow_versions SET steps
     if (normalizedSql.startsWith('update workflow_versions set steps')) {
         const [steps, versionId] = params;
         const stepsArr = typeof steps === 'string' ? JSON.parse(steps) : steps;
@@ -92,33 +228,41 @@ export async function query(text, params = []) {
         }
         return { rows: ver ? [ver] : [] };
     }
-    // 4. SELECT FROM workflows LEFT JOIN workflow_versions
-    if (normalizedSql.includes('from workflows') && normalizedSql.includes('left join workflow_versions')) {
-        if (params.length > 0 && normalizedSql.includes('where w.id =')) {
-            const wf = memoryWorkflows.get(params[0]);
-            if (!wf)
+    // 12. DELETE FROM workflows
+    if (normalizedSql.startsWith('delete from workflows')) {
+        const idVal = params[0];
+        const userIdFilter = params[1];
+        const wf = memoryWorkflows.get(idVal);
+        if (wf) {
+            if (userIdFilter && wf.user_id !== userIdFilter) {
                 return { rows: [] };
-            const ver = memoryVersions.get(wf.current_version_id);
-            const wfRuns = Array.from(memoryRuns.values()).filter((r) => r.workflow_id === wf.id);
-            let lastStatus = 'never_run';
-            let latestRunId = null;
-            if (wfRuns.length > 0) {
-                wfRuns.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
-                latestRunId = wfRuns[0].id;
-                const latestStatus = wfRuns[0].status;
-                if (latestStatus === 'completed' || latestStatus === 'success')
-                    lastStatus = 'success';
-                else if (latestStatus === 'failed' || latestStatus === 'timed_out')
-                    lastStatus = 'failed';
-                else if (latestStatus === 'awaiting_approval' || latestStatus === 'awaiting_credentials' || latestStatus === 'pending' || latestStatus === 'running')
-                    lastStatus = 'awaiting_approval';
-                else
-                    lastStatus = 'never_run';
             }
-            return { rows: [{ ...wf, steps: ver ? ver.steps : [], last_status: lastStatus, lastStatus, latest_run_id: latestRunId, latestRunId }] };
+            memoryWorkflows.delete(idVal);
+            // Cascade delete versions & runs
+            const versions = Array.from(memoryVersions.values()).filter((v) => v.workflow_id === idVal);
+            versions.forEach((v) => memoryVersions.delete(v.id));
+            const runs = Array.from(memoryRuns.values()).filter((r) => r.workflow_id === idVal);
+            runs.forEach((r) => memoryRuns.delete(r.id));
+            return { rows: [wf] };
         }
-        const list = [];
-        memoryWorkflows.forEach((wf) => {
+        return { rows: [] };
+    }
+    // 13. SELECT FROM workflows
+    if (normalizedSql.includes('from workflows')) {
+        let list = Array.from(memoryWorkflows.values());
+        if (normalizedSql.includes('where w.id =') || normalizedSql.includes('where id =')) {
+            const idParam = params[0];
+            const userIdParam = params[1];
+            list = list.filter((w) => w.id === idParam);
+            if (userIdParam) {
+                list = list.filter((w) => w.user_id === userIdParam);
+            }
+        }
+        else if (normalizedSql.includes('where w.user_id =') || normalizedSql.includes('where user_id =')) {
+            const userIdParam = params[0];
+            list = list.filter((w) => w.user_id === userIdParam);
+        }
+        const mappedList = list.map((wf) => {
             const ver = memoryVersions.get(wf.current_version_id);
             const wfRuns = Array.from(memoryRuns.values()).filter((r) => r.workflow_id === wf.id);
             let lastStatus = 'never_run';
@@ -136,33 +280,34 @@ export async function query(text, params = []) {
                 else
                     lastStatus = 'never_run';
             }
-            list.push({ ...wf, steps: ver ? ver.steps : [], last_status: lastStatus, lastStatus, latest_run_id: latestRunId, latestRunId });
+            const ownerUser = Array.from(memoryUsers.values()).find((u) => u.id === wf.user_id);
+            return {
+                ...wf,
+                user_name: ownerUser ? ownerUser.name : 'Unknown User',
+                user_email: ownerUser ? ownerUser.email : '',
+                steps: ver ? ver.steps : [],
+                last_status: lastStatus,
+                lastStatus,
+                latest_run_id: latestRunId,
+                latestRunId,
+            };
         });
-        return { rows: list };
+        return { rows: mappedList };
     }
-    // 5. SELECT FROM workflows WHERE id = $1
-    if (normalizedSql.includes('from workflows where id =')) {
-        const wf = memoryWorkflows.get(params[0]);
-        return { rows: wf ? [wf] : [] };
-    }
-    // 6. INSERT INTO runs
+    // --- RUNS TABLE QUERIES ---
+    // 14. INSERT INTO runs
     if (normalizedSql.startsWith('insert into runs')) {
         const [id, workflow_id, version_id, status] = params;
         const item = { id, workflow_id, version_id, status: status || 'pending', started_at: new Date().toISOString(), finished_at: null };
         memoryRuns.set(id, item);
         return { rows: [item] };
     }
-    // 7. SELECT FROM runs WHERE id = $1
-    if (normalizedSql.includes('from runs where id =')) {
-        const run = memoryRuns.get(params[0]);
-        return { rows: run ? [run] : [] };
-    }
-    // 8. SELECT FROM run_steps WHERE run_id = $1
+    // 15. SELECT FROM run_steps WHERE run_id = $1
     if (normalizedSql.includes('from run_steps where run_id =')) {
         const steps = memoryRunSteps.get(params[0]) || [];
         return { rows: steps };
     }
-    // 9. UPDATE runs SET status
+    // 16. UPDATE runs SET status
     if (normalizedSql.startsWith('update runs set status')) {
         if (normalizedSql.includes("status = 'pending'") && normalizedSql.includes('where id =')) {
             const runIdVal = params[0];
@@ -186,7 +331,7 @@ export async function query(text, params = []) {
         }
         return { rows: [] };
     }
-    // 10. SELECT FROM runs
+    // 17. SELECT FROM runs
     if (normalizedSql.includes('from runs')) {
         if (normalizedSql.includes("status = 'pending'")) {
             const pendingList = Array.from(memoryRuns.values())
@@ -196,10 +341,29 @@ export async function query(text, params = []) {
             const limit = limitMatch ? parseInt(limitMatch[1], 10) : 5;
             return { rows: pendingList.slice(0, limit) };
         }
-        const runsList = Array.from(memoryRuns.values()).map((r) => {
+        let runsList = Array.from(memoryRuns.values()).map((r) => {
             const wf = memoryWorkflows.get(r.workflow_id);
-            return { ...r, workflow_name: wf ? wf.name : r.workflow_id };
+            const owner = wf ? Array.from(memoryUsers.values()).find((u) => u.id === wf.user_id) : null;
+            return {
+                ...r,
+                workflow_name: wf ? wf.name : r.workflow_id,
+                user_id: wf ? wf.user_id : null,
+                user_name: owner ? owner.name : 'Unknown',
+                user_email: owner ? owner.email : '',
+            };
         });
+        if (normalizedSql.includes('where r.id =') || normalizedSql.includes('where id =')) {
+            const runIdParam = params[0];
+            const userIdParam = params[1];
+            runsList = runsList.filter((r) => r.id === runIdParam);
+            if (userIdParam) {
+                runsList = runsList.filter((r) => r.user_id === userIdParam);
+            }
+        }
+        else if (normalizedSql.includes('where w.user_id =') || normalizedSql.includes('where user_id =')) {
+            const userIdParam = params[0];
+            runsList = runsList.filter((r) => r.user_id === userIdParam);
+        }
         runsList.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
         return { rows: runsList };
     }

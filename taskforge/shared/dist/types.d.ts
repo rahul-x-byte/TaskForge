@@ -1,3 +1,18 @@
+export type UserRole = 'admin' | 'user';
+export interface User {
+    id: string;
+    name: string;
+    email: string;
+    role: UserRole;
+    created_at: string;
+    updated_at?: string;
+    workflow_count?: number;
+    run_count?: number;
+}
+export interface AuthResponse {
+    token: string;
+    user: User;
+}
 export type RunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'waiting_approval' | 'awaiting_approval' | 'timed_out' | 'awaiting_credentials' | 'awaiting_login';
 export interface SelectorBundle {
     role?: string;
@@ -27,11 +42,16 @@ export interface WorkflowStep {
 }
 export interface WorkflowDefinition {
     id: string;
+    user_id?: string;
     name: string;
     description?: string;
     current_version_id?: string;
     created_at: string;
     steps?: WorkflowStep[] | RecordedAction[];
+    last_status?: string;
+    lastStatus?: string;
+    latest_run_id?: string | null;
+    latestRunId?: string | null;
 }
 export interface WorkflowJobPayload {
     workflowId: string;

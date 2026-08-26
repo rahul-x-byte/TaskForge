@@ -41,16 +41,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             console.log('[TaskForge Background] Recorded sequence JSON:', JSON.stringify(queue, null, 2));
             await chrome.storage.local.set({ isRecording: false });
             // POST recording sequence to Backend API
-            const storage = await chrome.storage.local.get(['backendUrl']);
+            const storage = await chrome.storage.local.get(['backendUrl', 'authToken']);
             const rawBackend = message.backendUrl || storage.backendUrl || DEFAULT_BACKEND_URL;
             const backendUrl = normalizeRecordingsUrl(rawBackend);
             console.log('[TaskForge Background] Posting recording to normalized URL:', backendUrl);
+            const headers = {
+                'Content-Type': 'application/json',
+            };
+            if (storage.authToken) {
+                headers['Authorization'] = `Bearer ${storage.authToken}`;
+            }
             try {
                 const response = await fetch(backendUrl, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
+                    headers,
                     body: JSON.stringify({
                         name: `Recorded Workflow - ${new Date().toLocaleTimeString()}`,
                         steps: queue,

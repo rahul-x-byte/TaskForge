@@ -11,6 +11,7 @@ if (!fs.existsSync(DOWNLOADS_DIR))
     fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
 if (!fs.existsSync(FAILURES_DIR))
     fs.mkdirSync(FAILURES_DIR, { recursive: true });
+const WORKER_SECRET = process.env.WORKER_SECRET || 'taskforge-worker-secret-key-2026';
 async function uploadResultFileToBackend(runId, filePath) {
     if (!filePath || !fs.existsSync(filePath))
         return;
@@ -23,6 +24,7 @@ async function uploadResultFileToBackend(runId, filePath) {
             headers: {
                 'Content-Type': 'application/octet-stream',
                 'X-Filename': filename,
+                'X-Worker-Secret': WORKER_SECRET,
             },
             body: fileBuffer,
         });
@@ -424,7 +426,7 @@ export async function executeWorkflowRun(workflowId, versionId, runId) {
         // Mark Run Completed
         await fetch(`${BACKEND_URL}/api/runs/${runId}/status`, {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': WORKER_SECRET },
             body: JSON.stringify({
                 status: 'completed',
                 finishedAt: new Date().toISOString(),
@@ -444,7 +446,7 @@ export async function executeWorkflowRun(workflowId, versionId, runId) {
         // Check if run was explicitly cancelled before setting status to failed
         let isCancelled = false;
         try {
-            const checkRes = await fetch(`${BACKEND_URL}/api/runs/${runId}`);
+            const checkRes = await fetch(`${BACKEND_URL}/api/runs/${runId}`, { headers: { 'X-Worker-Secret': WORKER_SECRET } });
             if (checkRes.ok) {
                 const data = await checkRes.json();
                 if (data.run?.status === 'cancelled') {
@@ -479,7 +481,7 @@ export async function executeWorkflowRun(workflowId, versionId, runId) {
             // Update Status to Failed
             await fetch(`${BACKEND_URL}/api/runs/${runId}/status`, {
                 method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': WORKER_SECRET },
                 body: JSON.stringify({
                     status: 'failed',
                     finishedAt: new Date().toISOString(),

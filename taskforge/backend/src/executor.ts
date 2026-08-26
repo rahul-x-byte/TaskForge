@@ -15,6 +15,8 @@ const FAILURES_DIR = path.resolve(process.cwd(), 'failures');
 if (!fs.existsSync(DOWNLOADS_DIR)) fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
 if (!fs.existsSync(FAILURES_DIR)) fs.mkdirSync(FAILURES_DIR, { recursive: true });
 
+const WORKER_SECRET = process.env.WORKER_SECRET || 'taskforge-worker-secret-key-2026';
+
 async function uploadResultFileToBackend(runId: string, filePath: string) {
   if (!filePath || !fs.existsSync(filePath)) return;
   try {
@@ -27,6 +29,7 @@ async function uploadResultFileToBackend(runId: string, filePath: string) {
       headers: {
         'Content-Type': 'application/octet-stream',
         'X-Filename': filename,
+        'X-Worker-Secret': WORKER_SECRET,
       },
       body: fileBuffer,
     });
@@ -308,7 +311,7 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
 
       await fetch(`${backendUrl}/api/runs/${runId}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': WORKER_SECRET },
         body: JSON.stringify({
           status: 'running',
           detail: { stepIndex: i, action: step.action, targetLabel, pageUrl: step.pageUrl || '', totalSteps: rawSteps.length },
@@ -372,7 +375,7 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
 
     await fetch(`${backendUrl}/api/runs/${runId}/status`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': WORKER_SECRET },
       body: JSON.stringify({
         status: 'completed',
         finishedAt: new Date().toISOString(),
@@ -393,7 +396,7 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
 
     let isCancelled = false;
     try {
-      const checkRes = await fetch(`${backendUrl}/api/runs/${runId}`);
+      const checkRes = await fetch(`${backendUrl}/api/runs/${runId}`, { headers: { 'X-Worker-Secret': WORKER_SECRET } });
       if (checkRes.ok) {
         const data: any = await checkRes.json();
         if (data.run?.status === 'cancelled') isCancelled = true;
@@ -403,7 +406,7 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
     if (!isCancelled) {
       await fetch(`${backendUrl}/api/runs/${runId}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': WORKER_SECRET },
         body: JSON.stringify({
           status: 'failed',
           finishedAt: new Date().toISOString(),

@@ -2,6 +2,7 @@ import { executeWorkflowRun } from './executor.js';
 import { resolveBackendUrl } from './config.js';
 
 const BACKEND_URL = resolveBackendUrl();
+const WORKER_SECRET = process.env.WORKER_SECRET || 'taskforge-worker-secret-key-2026';
 
 console.log('[Worker] TaskForge Automation Worker Service starting...');
 console.log(`[Worker] Using BACKEND_URL: ${BACKEND_URL}`);
@@ -9,18 +10,22 @@ console.log('[Worker] Listening for workflow execution jobs...');
 
 // Polling Loop for execution jobs from backend
 export async function pollForJobs() {
-  console.log('[Worker] TaskForge Automation Worker Service starting...');
   console.log('[Worker] Listening for workflow execution jobs...');
 
   while (true) {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/runs/pending`);
+      const res = await fetch(`${BACKEND_URL}/api/runs/pending`, {
+        headers: { 'X-Worker-Secret': WORKER_SECRET },
+      });
       if (res.ok) {
         const pendingRuns = await res.json();
         for (const run of pendingRuns) {
           const claimRes = await fetch(
             `${BACKEND_URL}/api/runs/${run.id}/claim`,
-            { method: 'POST' }
+            {
+              method: 'POST',
+              headers: { 'X-Worker-Secret': WORKER_SECRET },
+            }
           );
           if (claimRes.ok) {
             console.log(`[Worker] Claimed run ${run.id}, executing...`);
