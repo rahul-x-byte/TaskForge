@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Layers, Server, Clock, Settings, AlertCircle, CheckCircle2, Shield, Users, LogOut } from 'lucide-react';
+import { Layers, Server, Clock, Settings, AlertCircle, CheckCircle2, Shield, Users, LogOut, Key } from 'lucide-react';
 import { API_BASE, setApiBase, checkBackendHealth, DEFAULT_PROD_BACKEND_URL } from '../api';
 import { useAuth } from '../auth/AuthContext';
 
@@ -193,6 +193,34 @@ export const Navbar: React.FC = () => {
               <div style={{ color: '#f8fafc', fontWeight: 600 }}>{user.name}</div>
               <div style={{ color: '#64748b', fontSize: '0.7rem' }}>{user.email}</div>
             </div>
+            <button
+              onClick={() => {
+                const token = localStorage.getItem('taskforge_auth_token');
+                if (token) {
+                  navigator.clipboard.writeText(token);
+                  alert('Auth Token copied to clipboard! Paste it into the TaskForge Chrome Extension popup.');
+                } else {
+                  alert('No active Auth Token found. Please log in first.');
+                }
+              }}
+              style={{
+                background: 'rgba(56, 189, 248, 0.15)',
+                color: '#38bdf8',
+                border: '1px solid rgba(56, 189, 248, 0.3)',
+                padding: '6px 10px',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+              }}
+              title="Copy Auth Token for Chrome Extension"
+            >
+              <Key size={14} />
+              <span>Copy Token</span>
+            </button>
             <button
               onClick={() => {
                 logout();
