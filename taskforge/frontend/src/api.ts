@@ -87,13 +87,35 @@ export async function authFetch(url: string, options: RequestInit = {}): Promise
 export async function checkBackendHealth(): Promise<boolean> {
   try {
     const currentBase = getApiBase();
-    const healthUrl = currentBase.replace(/\/api\/?$/, '') + '/health';
-    const res = await authFetch(healthUrl, { method: 'GET' }).catch(() => null);
-    if (res && res.ok) return true;
+    const rootBase = currentBase.replace(/\/api\/?$/, '');
 
-    // Fallback check to /api/workflows
-    const wfRes = await authFetch(`${currentBase}/workflows`, { method: 'GET' }).catch(() => null);
-    return !!(wfRes && wfRes.ok);
+    // 1. Unauthenticated root /health check (Simple CORS request, avoids preflight)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 7000);
+    try {
+      const res = await fetch(`${rootBase}/health`, {
+        method: 'GET',
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (res.ok || res.status === 200 || res.status === 304) return true;
+    } catch (e) {
+      clearTimeout(timeoutId);
+    }
+
+    // 2. Unauthenticated /api/health check
+    try {
+      const apiRes = await fetch(`${currentBase}/health`, { method: 'GET' });
+      if (apiRes.ok || apiRes.status === 200 || apiRes.status === 304) return true;
+    } catch (e) {}
+
+    // 3. Fallback reachability check (any HTTP status < 500 proves the server is reachable and online)
+    try {
+      const fallbackRes = await fetch(`${currentBase}/workflows`, { method: 'GET' });
+      if (fallbackRes.status < 500) return true;
+    } catch (e) {}
+
+    return false;
   } catch (err) {
     return false;
   }

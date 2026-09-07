@@ -12,7 +12,12 @@ import { executeWorkflowRun } from './executor.js';
 import { requireAuth, requireAdmin, verifyWorkerSecret, verifySupabaseToken } from './auth.js';
 import { supabaseAdmin } from './lib/supabaseAdmin.js';
 const app = Fastify({ logger: true });
-await app.register(cors, { origin: true });
+await app.register(cors, {
+    origin: true,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+});
 await app.register(formbody);
 await app.register(websocket);
 const uploadsDir = path.resolve(process.cwd(), 'uploads');
@@ -29,8 +34,9 @@ try {
 catch (mErr) {
     console.warn('[Backend] Database migration warning (using in-memory compatibility engine):', mErr);
 }
-// Global Health Check
+// Global Health Checks (Both root and /api prefixes)
 app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
+app.get('/api/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
 // ====================================================
 // 1. AUTHENTICATION APIS (SUPABASE AUTH INTEGRATION)
 // ====================================================
