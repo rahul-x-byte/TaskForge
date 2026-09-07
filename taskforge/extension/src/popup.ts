@@ -11,8 +11,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Load saved backend URL & authToken or set default
   chrome.storage.local.get(['backendUrl', 'authToken'], (result) => {
+    let url = (result.backendUrl || DEFAULT_BACKEND_URL).trim();
+    if (url.includes('ta41')) {
+      url = url.replace(/ta41\.onrender\.com/g, 'ta4i.onrender.com');
+      chrome.storage.local.set({ backendUrl: url });
+    }
     if (backendUrlInput) {
-      backendUrlInput.value = result.backendUrl || DEFAULT_BACKEND_URL;
+      backendUrlInput.value = url;
     }
     if (authTokenInput) {
       authTokenInput.value = result.authToken || '';
@@ -21,8 +26,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (backendUrlInput) {
     backendUrlInput.addEventListener('change', () => {
-      const val = backendUrlInput.value.trim() || DEFAULT_BACKEND_URL;
+      let val = backendUrlInput.value.trim() || DEFAULT_BACKEND_URL;
+      if (val.includes('ta41')) {
+        val = val.replace(/ta41\.onrender\.com/g, 'ta4i.onrender.com');
+        backendUrlInput.value = val;
+      }
       chrome.storage.local.set({ backendUrl: val });
+      loadWorkflows();
     });
   }
 
@@ -30,6 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
     authTokenInput.addEventListener('change', () => {
       const val = authTokenInput.value.trim();
       chrome.storage.local.set({ authToken: val });
+      loadWorkflows();
     });
   }
 
@@ -62,6 +73,9 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const storage = await chrome.storage.local.get(['backendUrl', 'authToken']);
       let base = (storage.backendUrl || DEFAULT_BACKEND_URL).trim().replace(/\/+$/, '');
+      if (base.includes('ta41')) {
+        base = base.replace(/ta41\.onrender\.com/g, 'ta4i.onrender.com');
+      }
       if (base.endsWith('/recordings')) base = base.replace(/\/recordings$/, '');
       if (!base.endsWith('/api')) base = `${base}/api`;
 
@@ -114,6 +128,8 @@ document.addEventListener('DOMContentLoaded', () => {
           item.appendChild(runBtn);
           workflowsList.appendChild(item);
         });
+      } else if (res && res.status === 401) {
+        workflowsList.innerHTML = '<div style="font-size:0.72rem; color:#fbbf24;">Auth token required (paste below)</div>';
       } else {
         workflowsList.innerHTML = '<div style="font-size:0.72rem; color:#f87171;">Backend unreachable</div>';
       }
