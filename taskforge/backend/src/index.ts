@@ -39,7 +39,14 @@ try {
   console.warn('[Backend] Database migration warning (using in-memory compatibility engine):', mErr);
 }
 
-// Global Health Checks (Both root and /api prefixes)
+// Global Health Checks (Root status, /health and /api/health)
+app.get('/', async () => ({
+  name: 'TaskForge Backend API',
+  status: 'online',
+  health: '/health',
+  api: '/api',
+  timestamp: new Date().toISOString(),
+}));
 app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
 app.get('/api/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
 

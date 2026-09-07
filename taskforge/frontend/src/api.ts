@@ -1,4 +1,4 @@
-export const DEFAULT_PROD_BACKEND_URL = 'https://taskforge-backend-ta4i.onrender.com/api';
+export const DEFAULT_PROD_BACKEND_URL = 'https://taskforge-bd.onrender.com/api';
 export const DEFAULT_LOCAL_BACKEND_URL = 'http://localhost:3001/api';
 
 export const getApiBase = () => {
@@ -6,7 +6,7 @@ export const getApiBase = () => {
     const isHttps = window.location.protocol === 'https:';
     const saved = localStorage.getItem('taskforge_api_base');
     if (saved) {
-      if (saved.includes('ta41') || saved.includes('<YOUR-ACTIVE-BACKEND-URL>')) {
+      if (saved.includes('ta41') || saved.includes('ta4i') || saved.includes('<YOUR-ACTIVE-BACKEND-URL>')) {
         localStorage.removeItem('taskforge_api_base');
       } else {
         let cleaned = saved.trim().replace(/\/+$/, '');
@@ -31,7 +31,7 @@ export const getApiBase = () => {
   if (import.meta.env.VITE_API_BASE) {
     let envBase = import.meta.env.VITE_API_BASE.trim().replace(/\/+$/, '');
     if (!envBase.includes('<YOUR-ACTIVE-BACKEND-URL>')) {
-      envBase = envBase.replace(/ta41\.onrender\.com/g, 'ta4i.onrender.com');
+      envBase = envBase.replace(/taskforge-backend-ta4[1i]\.onrender\.com/g, 'taskforge-bd.onrender.com');
       if (!envBase.endsWith('/api')) envBase = `${envBase}/api`;
       return envBase;
     }
@@ -46,7 +46,7 @@ export const setApiBase = (url: string) => {
   if (typeof window !== 'undefined') {
     let cleaned = url.trim().replace(/\/+$/, '');
     if (cleaned.includes('<YOUR-ACTIVE-BACKEND-URL>')) return;
-    cleaned = cleaned.replace(/ta41\.onrender\.com/g, 'ta4i.onrender.com');
+    cleaned = cleaned.replace(/taskforge-backend-ta4[1i]\.onrender\.com/g, 'taskforge-bd.onrender.com');
     if (!cleaned.endsWith('/api')) cleaned = `${cleaned}/api`;
     localStorage.setItem('taskforge_api_base', cleaned);
     window.location.reload();

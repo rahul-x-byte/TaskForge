@@ -7,13 +7,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const authTokenInput = document.getElementById('auth-token-input') as HTMLInputElement;
 
-  const DEFAULT_BACKEND_URL = 'https://taskforge-backend-ta4i.onrender.com/api/recordings';
+  const DEFAULT_BACKEND_URL = 'https://taskforge-bd.onrender.com/api/recordings';
 
   // Load saved backend URL & authToken or set default
   chrome.storage.local.get(['backendUrl', 'authToken'], (result) => {
     let url = (result.backendUrl || DEFAULT_BACKEND_URL).trim();
-    if (url.includes('ta41')) {
-      url = url.replace(/ta41\.onrender\.com/g, 'ta4i.onrender.com');
+    if (url.includes('ta41') || url.includes('ta4i')) {
+      url = url.replace(/taskforge-backend-(ta41|ta4i)\.onrender\.com/g, 'taskforge-bd.onrender.com');
       chrome.storage.local.set({ backendUrl: url });
     }
     if (backendUrlInput) {
@@ -47,8 +47,8 @@ document.addEventListener('DOMContentLoaded', () => {
   if (backendUrlInput) {
     backendUrlInput.addEventListener('change', () => {
       let val = backendUrlInput.value.trim() || DEFAULT_BACKEND_URL;
-      if (val.includes('ta41')) {
-        val = val.replace(/ta41\.onrender\.com/g, 'ta4i.onrender.com');
+      if (val.includes('ta41') || val.includes('ta4i')) {
+        val = val.replace(/taskforge-backend-(ta41|ta4i)\.onrender\.com/g, 'taskforge-bd.onrender.com');
         backendUrlInput.value = val;
       }
       chrome.storage.local.set({ backendUrl: val });
@@ -93,8 +93,8 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const storage = await chrome.storage.local.get(['backendUrl', 'authToken']);
       let base = (storage.backendUrl || DEFAULT_BACKEND_URL).trim().replace(/\/+$/, '');
-      if (base.includes('ta41')) {
-        base = base.replace(/ta41\.onrender\.com/g, 'ta4i.onrender.com');
+      if (base.includes('ta41') || base.includes('ta4i')) {
+        base = base.replace(/taskforge-backend-(ta41|ta4i)\.onrender\.com/g, 'taskforge-bd.onrender.com');
       }
       if (base.endsWith('/recordings')) base = base.replace(/\/recordings$/, '');
       if (!base.endsWith('/api')) base = `${base}/api`;

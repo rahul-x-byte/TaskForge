@@ -8,7 +8,7 @@ export function resolveBackendUrl() {
     catch {
         console.error(`[Worker Fatal] BACKEND_URL is invalid: "${raw}". ` +
             `It must be a full URL including https://, e.g. ` +
-            `https://taskforge-backend-ta4i.onrender.com`);
+            `https://taskforge-bd.onrender.com`);
         process.exit(1);
     }
     return normalized.replace(/\/$/, ''); // strip trailing slash

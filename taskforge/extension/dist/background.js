@@ -4,10 +4,10 @@ chrome.runtime.onInstalled.addListener(() => {
     console.log('[TaskForge Background] Extension installed.');
     chrome.storage.local.set({ isRecording: false, recordingQueue: [] });
 });
-const DEFAULT_BACKEND_URL = 'https://taskforge-backend-ta4i.onrender.com/api/recordings';
+const DEFAULT_BACKEND_URL = 'https://taskforge-bd.onrender.com/api/recordings';
 function normalizeRecordingsUrl(urlStr) {
     let cleaned = (urlStr || '').trim();
-    cleaned = cleaned.replace(/ta41\.onrender\.com/g, 'ta4i.onrender.com');
+    cleaned = cleaned.replace(/taskforge-backend-(ta41|ta4i)\.onrender\.com/g, 'taskforge-bd.onrender.com');
     if (!cleaned)
         return DEFAULT_BACKEND_URL;
     if (!/^https?:\/\//i.test(cleaned)) {

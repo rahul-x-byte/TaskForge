@@ -5,11 +5,11 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({ isRecording: false, recordingQueue: [] });
 });
 
-const DEFAULT_BACKEND_URL = 'https://taskforge-backend-ta4i.onrender.com/api/recordings';
+const DEFAULT_BACKEND_URL = 'https://taskforge-bd.onrender.com/api/recordings';
 
 function normalizeRecordingsUrl(urlStr: string): string {
   let cleaned = (urlStr || '').trim();
-  cleaned = cleaned.replace(/ta41\.onrender\.com/g, 'ta4i.onrender.com');
+  cleaned = cleaned.replace(/taskforge-backend-(ta41|ta4i)\.onrender\.com/g, 'taskforge-bd.onrender.com');
   if (!cleaned) return DEFAULT_BACKEND_URL;
   if (!/^https?:\/\//i.test(cleaned)) {
     if (/^(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)/i.test(cleaned)) {
