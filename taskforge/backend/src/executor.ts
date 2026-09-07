@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import { readFile } from 'fs/promises';
 import { SelectorBundle, RecordedAction } from '@taskforge/shared';
 import { resolveBackendUrl } from './config.js';
+import { pool } from './db/index.js';
 
 type Browser = any;
 type BrowserContext = any;
@@ -224,18 +225,41 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
   let isRunApproved = false;
 
   try {
-    const wfRes = await fetch(`${backendUrl}/api/workflows/${workflowId}`);
-    if (!wfRes.ok) {
-      throw new Error(`Failed to load workflow ${workflowId}`);
-    }
-    const wfData: any = await wfRes.json();
-    const rawSteps: (RecordedAction & { isSensitive?: boolean })[] = wfData.steps || [];
+    let rawSteps: (RecordedAction & { isSensitive?: boolean })[] = [];
+    let workflowName = `Workflow ${workflowId}`;
 
-    console.log(`[Executor] Starting execution for Run ${runId} (Workflow: ${wfData.name}, Total Steps: ${rawSteps.length})`);
+    // 1. Direct DB / memory pool query (instant, no network overhead)
+    try {
+      const wfRow = await pool.query('SELECT * FROM workflows WHERE id = $1', [workflowId]);
+      if (wfRow.rows.length > 0) {
+        workflowName = wfRow.rows[0].name || workflowName;
+        const targetVerId = versionId || wfRow.rows[0].current_version_id;
+        const verRow = await pool.query('SELECT * FROM workflow_versions WHERE id = $1', [targetVerId]);
+        if (verRow.rows.length > 0) {
+          rawSteps = verRow.rows[0].steps || [];
+        }
+      }
+    } catch (dbErr) {}
+
+    // 2. HTTP fallback with X-Worker-Secret header
+    if (rawSteps.length === 0) {
+      const wfRes = await fetch(`${backendUrl}/api/workflows/${workflowId}`, {
+        headers: { 'X-Worker-Secret': WORKER_SECRET },
+      });
+      if (wfRes.ok) {
+        const wfData: any = await wfRes.json();
+        workflowName = wfData.name || workflowName;
+        rawSteps = wfData.steps || [];
+      } else {
+        throw new Error(`Failed to load workflow ${workflowId} (HTTP ${wfRes.status})`);
+      }
+    }
+
+    console.log(`[Executor] Starting execution for Run ${runId} (Workflow: ${workflowName}, Total Steps: ${rawSteps.length})`);
 
     await fetch(`${backendUrl}/api/runs/${runId}/status`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': WORKER_SECRET },
       body: JSON.stringify({ status: 'running' }),
     }).catch(() => {});
 

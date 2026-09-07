@@ -22,6 +22,26 @@ document.addEventListener('DOMContentLoaded', () => {
     if (authTokenInput) {
       authTokenInput.value = result.authToken || '';
     }
+
+    // Auto-sync token from active TaskForge dashboard tab if missing or if tab has newer session
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const tab = tabs[0];
+      if (tab && tab.id && tab.url && (tab.url.includes('vercel.app') || tab.url.includes('localhost') || tab.url.includes('taskforge'))) {
+        chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => localStorage.getItem('taskforge_auth_token'),
+        }, (results) => {
+          const activeToken = results?.[0]?.result;
+          if (activeToken && typeof activeToken === 'string' && activeToken !== result.authToken) {
+            chrome.storage.local.set({ authToken: activeToken });
+            if (authTokenInput) {
+              authTokenInput.value = activeToken;
+            }
+            loadWorkflows();
+          }
+        });
+      }
+    });
   });
 
   if (backendUrlInput) {

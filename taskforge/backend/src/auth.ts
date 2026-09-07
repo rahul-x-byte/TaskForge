@@ -82,6 +82,18 @@ export async function verifySupabaseToken(authHeader?: string): Promise<AuthUser
  * Fastify preHandler: Require valid authenticated user session
  */
 export async function requireAuth(request: FastifyRequest, reply: FastifyReply) {
+  // Allow internal worker / executor calls authenticated with X-Worker-Secret
+  const headerSecret = request.headers['x-worker-secret'];
+  if (headerSecret && headerSecret === WORKER_SECRET) {
+    request.user = {
+      id: 'worker-internal',
+      email: 'worker@taskforge.internal',
+      name: 'TaskForge Worker',
+      role: 'admin',
+    };
+    return;
+  }
+
   const authHeader = request.headers.authorization;
   const user = await verifySupabaseToken(authHeader);
 
