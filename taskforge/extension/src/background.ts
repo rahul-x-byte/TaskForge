@@ -9,6 +9,7 @@ const DEFAULT_BACKEND_URL = 'https://taskforge-backend-ta4i.onrender.com/api/rec
 
 function normalizeRecordingsUrl(urlStr: string): string {
   let cleaned = (urlStr || '').trim();
+  cleaned = cleaned.replace(/ta41\.onrender\.com/g, 'ta4i.onrender.com');
   if (!cleaned) return DEFAULT_BACKEND_URL;
   if (!/^https?:\/\//i.test(cleaned)) {
     if (/^(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)/i.test(cleaned)) {

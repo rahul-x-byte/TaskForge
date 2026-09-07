@@ -7,6 +7,7 @@ chrome.runtime.onInstalled.addListener(() => {
 const DEFAULT_BACKEND_URL = 'https://taskforge-backend-ta4i.onrender.com/api/recordings';
 function normalizeRecordingsUrl(urlStr) {
     let cleaned = (urlStr || '').trim();
+    cleaned = cleaned.replace(/ta41\.onrender\.com/g, 'ta4i.onrender.com');
     if (!cleaned)
         return DEFAULT_BACKEND_URL;
     if (!/^https?:\/\//i.test(cleaned)) {
