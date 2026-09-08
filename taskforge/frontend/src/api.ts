@@ -199,6 +199,18 @@ export async function fetchWorkflowById(id: string): Promise<WorkflowItem> {
   return await res.json();
 }
 
+export async function updateWorkflow(workflowId: string, data: { name?: string; steps?: any[] }): Promise<void> {
+  const res = await authFetch(`${API_BASE}/workflows/${workflowId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.message || errData.error || 'Failed to update workflow');
+  }
+}
+
 export async function updateWorkflowSteps(workflowId: string, steps: any[]): Promise<void> {
   const res = await authFetch(`${API_BASE}/workflows/${workflowId}/steps`, {
     method: 'PUT',
@@ -212,7 +224,10 @@ export async function deleteWorkflow(workflowId: string): Promise<void> {
   const res = await authFetch(`${API_BASE}/workflows/${workflowId}`, {
     method: 'DELETE',
   });
-  if (!res.ok) throw new Error('Failed to delete workflow');
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.message || errData.error || 'Failed to delete workflow');
+  }
 }
 
 export async function triggerWorkflowRun(workflowId: string): Promise<{ runId: string; status: string }> {

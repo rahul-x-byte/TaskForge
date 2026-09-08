@@ -10,7 +10,7 @@ import { Login } from './pages/Login';
 import { Register } from './pages/Register';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { UserManagement } from './pages/UserManagement';
-import { fetchWorkflows, createWorkflowFromTemplate, triggerWorkflowRun, WorkflowItem } from './api';
+import { fetchWorkflows, triggerWorkflowRun, WorkflowItem } from './api';
 import { ShieldAlert, ArrowLeft } from 'lucide-react';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boolean }> = ({ children, requireAdmin }) => {
@@ -77,17 +77,6 @@ const WorkflowsView: React.FC = () => {
     alert('To record a new workflow:\n\n1. Open any web page in Chrome.\n2. Click the TaskForge Chrome Extension icon.\n3. Click "Start Recording", perform your sequence, and click "Stop Recording".');
   };
 
-  const handleUseTemplate = async (templateId: string) => {
-    try {
-      const res = await createWorkflowFromTemplate(templateId);
-      await loadWorkflows();
-      navigate(`/workflows/${res.workflowId}`);
-    } catch (err) {
-      console.error('Failed to create workflow from template:', err);
-      alert('Failed to create workflow from template.');
-    }
-  };
-
   const handleRunWorkflow = async (workflowId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
@@ -106,6 +95,7 @@ const WorkflowsView: React.FC = () => {
     schedule: wf.schedule ? `${wf.schedule.frequency}${wf.schedule.time ? ` (${wf.schedule.time})` : ''}` : undefined,
     lastStatus: wf.lastStatus || 'never_run',
     latestRunId: wf.latestRunId,
+    created_at: wf.created_at,
   }));
 
   if (loading) {
@@ -116,10 +106,10 @@ const WorkflowsView: React.FC = () => {
     <WorkflowDashboard
       workflows={workflows}
       onRecordNew={handleRecordNew}
-      onUseTemplate={handleUseTemplate}
       onSelectWorkflow={(id) => navigate(`/workflows/${id}`)}
       onRunWorkflow={handleRunWorkflow}
       onOpenRunStatus={(runId) => navigate(`/runs/${runId}`)}
+      onRefresh={loadWorkflows}
     />
   );
 };

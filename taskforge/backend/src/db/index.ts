@@ -229,6 +229,17 @@ export async function query(text: string, params: any[] = []): Promise<{ rows: a
     return { rows: [item] };
   }
 
+  // 9b. UPDATE workflows SET name
+  if (normalizedSql.startsWith('update workflows set name')) {
+    const [nameVal, workflowId] = params;
+    const wf = memoryWorkflows.get(workflowId);
+    if (wf) {
+      wf.name = nameVal;
+      memoryWorkflows.set(workflowId, wf);
+    }
+    return { rows: wf ? [wf] : [] };
+  }
+
   // 10. UPDATE workflows SET current_version_id
   if (normalizedSql.startsWith('update workflows set current_version_id')) {
     const [versionId, workflowId] = params;

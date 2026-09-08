@@ -348,6 +348,54 @@ app.get('/api/workflows/:id', { preHandler: [requireAuth] }, async (request, rep
     });
 });
 /**
+ * Update Entire Workflow (Name and/or Steps) - IDOR Guarded
+ */
+app.put('/api/workflows/:id', { preHandler: [requireAuth] }, async (request, reply) => {
+    const user = request.user;
+    const { id } = request.params;
+    const body = request.body;
+    if (!body || typeof body !== 'object') {
+        return reply.status(400).send({ error: 'Bad Request', message: 'Request body must be a valid JSON object.' });
+    }
+    // Check ownership
+    let checkQuery = 'SELECT * FROM workflows WHERE id = $1';
+    let checkParams = [id];
+    if (user.role !== 'admin') {
+        checkQuery = 'SELECT * FROM workflows WHERE id = $1 AND user_id = $2';
+        checkParams = [id, user.id];
+    }
+    const wfRes = await pool.query(checkQuery, checkParams);
+    if (wfRes.rows.length === 0) {
+        return reply.status(404).send({ error: 'Not Found', message: 'Workflow not found or access denied.' });
+    }
+    const wf = wfRes.rows[0];
+    // 1. Update workflow name if provided
+    if (typeof body.name === 'string' && body.name.trim()) {
+        await pool.query('UPDATE workflows SET name = $1 WHERE id = $2', [body.name.trim(), id]);
+        wf.name = body.name.trim();
+    }
+    // 2. Update workflow steps if provided
+    let stepCount;
+    if (Array.isArray(body.steps)) {
+        stepCount = body.steps.length;
+        if (wf.current_version_id) {
+            await pool.query('UPDATE workflow_versions SET steps = $1 WHERE id = $2', [JSON.stringify(body.steps), wf.current_version_id]);
+        }
+        else {
+            const newVerId = uuidv4();
+            await pool.query('INSERT INTO workflow_versions (id, workflow_id, steps) VALUES ($1, $2, $3)', [newVerId, id, JSON.stringify(body.steps)]);
+            await pool.query('UPDATE workflows SET current_version_id = $1 WHERE id = $2', [newVerId, id]);
+            wf.current_version_id = newVerId;
+        }
+    }
+    return reply.send({
+        status: 'success',
+        workflowId: id,
+        name: wf.name,
+        stepCount,
+    });
+});
+/**
  * Update Workflow Steps (IDOR Guarded)
  */
 app.put('/api/workflows/:id/steps', { preHandler: [requireAuth] }, async (request, reply) => {
@@ -364,7 +412,7 @@ app.put('/api/workflows/:id/steps', { preHandler: [requireAuth] }, async (reques
     }
     const wfRes = await pool.query(checkQuery, checkParams);
     if (wfRes.rows.length === 0) {
-        return reply.status(403).send({ error: 'Forbidden', message: 'You do not own this workflow.' });
+        return reply.status(404).send({ error: 'Not Found', message: 'Workflow not found or access denied.' });
     }
     const wf = wfRes.rows[0];
     await pool.query('UPDATE workflow_versions SET steps = $1 WHERE id = $2', [JSON.stringify(steps), wf.current_version_id]);
@@ -376,15 +424,16 @@ app.put('/api/workflows/:id/steps', { preHandler: [requireAuth] }, async (reques
 app.delete('/api/workflows/:id', { preHandler: [requireAuth] }, async (request, reply) => {
     const user = request.user;
     const { id } = request.params;
-    let delQuery = 'DELETE FROM workflows WHERE id = $1';
+    let delQuery = 'DELETE FROM workflows WHERE id = $1 RETURNING id';
     let delParams = [id];
     if (user.role !== 'admin') {
-        delQuery = 'DELETE FROM workflows WHERE id = $1 AND user_id = $2';
+        delQuery = 'DELETE FROM workflows WHERE id = $1 AND user_id = $2 RETURNING id';
         delParams = [id, user.id];
     }
     const res = await pool.query(delQuery, delParams);
-    if (res.rows.length === 0) {
-        return reply.status(403).send({ error: 'Forbidden', message: 'Workflow not found or access denied.' });
+    const deletedCount = res.rows ? res.rows.length : res.rowCount || 0;
+    if (deletedCount === 0) {
+        return reply.status(404).send({ error: 'Not Found', message: 'Workflow not found or access denied.' });
     }
     return reply.send({ status: 'deleted', workflowId: id });
 });
