@@ -16,10 +16,33 @@ import { supabaseAdmin } from './lib/supabaseAdmin.js';
 const app = Fastify({ logger: true });
 
 await app.register(cors, {
-  origin: true,
+  origin: (origin, cb) => {
+    // Allow non-browser requests (e.g. curl, background service workers, mobile, server-to-server)
+    if (!origin) return cb(null, true);
+
+    const allowedOrigins = [
+      'https://task-forge-phi-six.vercel.app',
+      'http://localhost:3000',
+      'http://localhost:5173',
+      'http://localhost:3001',
+      'http://127.0.0.1:5173',
+      'http://127.0.0.1:3000',
+      'http://127.0.0.1:3001',
+    ];
+
+    if (
+      allowedOrigins.includes(origin) ||
+      origin.startsWith('chrome-extension://') ||
+      origin.endsWith('.vercel.app')
+    ) {
+      return cb(null, true);
+    }
+
+    return cb(new Error('Not allowed by CORS'), false);
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Worker-Secret'],
 });
 await app.register(formbody);
 await app.register(websocket);
@@ -223,7 +246,7 @@ app.get('/api/workflows', { preHandler: [requireAuth] }, async (request, reply) 
     'SELECT w.* FROM workflows w WHERE w.user_id = $1 ORDER BY w.created_at DESC',
     [user.id]
   );
-  return reply.send(res.rows);
+  return reply.send(res.rows || []);
 });
 
 /**
@@ -301,37 +324,65 @@ app.post('/api/workflows/from-template', { preHandler: [requireAuth] }, async (r
 });
 
 /**
- * Post Recording from Extension (Gracefully accepts authenticated token or falls back to primary account)
+ * Post Recording from Extension
+ * Strictly requires authentication via Supabase Bearer token; binds workflow to the authenticated user ID.
+ * Uses pool.query as the single source of truth for workflow persistence.
  */
 app.post('/api/recordings', async (request, reply) => {
-  let user: any = null;
   const authHeader = request.headers.authorization;
-  if (authHeader) {
-    user = await verifySupabaseToken(authHeader);
+  if (!authHeader) {
+    console.warn('[TaskForge Backend] /api/recordings rejected: Missing Authorization header');
+    return reply.status(401).send({
+      error: 'Unauthorized',
+      message: 'Authentication required. Please log in to TaskForge or supply an Authorization Bearer token.',
+    });
   }
 
-  // Fallback to primary registered account if no token was supplied
-  if (!user) {
-    try {
-      const pRes = await pool.query('SELECT id, email, name, role FROM profiles ORDER BY created_at ASC LIMIT 1');
-      if (pRes.rows.length > 0) {
-        user = pRes.rows[0];
-      }
-    } catch (e) {}
+  const user = await verifySupabaseToken(authHeader);
+  if (!user || !user.id) {
+    console.warn('[TaskForge Backend] /api/recordings rejected: Invalid or expired token');
+    return reply.status(401).send({
+      error: 'Unauthorized',
+      message: 'Invalid or expired authentication token. Please log in to TaskForge again.',
+    });
   }
 
-  const userId = user ? user.id : 'u-user-seed-002';
   const body = request.body as any;
+  if (!body || typeof body !== 'object') {
+    return reply.status(400).send({
+      error: 'Bad Request',
+      message: 'Request body must be a valid JSON object.',
+    });
+  }
 
-  const steps: RecordedAction[] = body.steps || [];
-  const workflowName = body.name || `Recorded Workflow - ${new Date().toLocaleTimeString()}`;
+  const steps: RecordedAction[] = Array.isArray(body.steps) ? body.steps : [];
+  const rawName = typeof body.name === 'string' ? body.name.trim() : '';
+  const workflowName = rawName || `Recorded Workflow - ${new Date().toLocaleTimeString()}`;
 
   const workflowId = uuidv4();
   const versionId = uuidv4();
 
+  console.log(`[TaskForge Backend] POST /api/recordings - User: ${user.id} (${user.email}), Steps: ${steps.length}`);
+
+  // Ensure user profile exists in database for foreign key referential integrity
+  try {
+    await pool.query(
+      'INSERT INTO profiles (id, name, email, role) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING',
+      [user.id, user.name || 'User', user.email || '', user.role || 'user']
+    );
+  } catch (profErr) {
+    try {
+      await pool.query(
+        'INSERT INTO users (id, name, email, password_hash, role) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING',
+        [user.id, user.name || 'User', user.email || '', 'managed_by_supabase', user.role || 'user']
+      );
+    } catch (uErr) {}
+  }
+
+  // Insert workflow and version using the database pool abstraction (source of truth)
   await pool.query(
     'INSERT INTO workflows (id, name, user_id, current_version_id) VALUES ($1, $2, $3, $4)',
-    [workflowId, workflowName, userId, versionId]
+    [workflowId, workflowName, user.id, versionId]
   );
 
   await pool.query(
@@ -339,13 +390,15 @@ app.post('/api/recordings', async (request, reply) => {
     [versionId, workflowId, JSON.stringify(steps)]
   );
 
+  console.log(`[TaskForge Backend] Workflow created: ${workflowId} (version: ${versionId})`);
+
   return reply.status(201).send({
     status: 'success',
     workflowId,
     versionId,
     name: workflowName,
     stepCount: steps.length,
-    user_id: userId,
+    user_id: user.id,
   });
 });
 

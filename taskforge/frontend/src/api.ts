@@ -1,7 +1,7 @@
 export const DEFAULT_PROD_BACKEND_URL = 'https://taskforge-bd.onrender.com/api';
 export const DEFAULT_LOCAL_BACKEND_URL = 'http://localhost:3001/api';
 
-export const getApiBase = () => {
+export const getApiBase = (): string => {
   if (typeof window !== 'undefined') {
     const isHttps = window.location.protocol === 'https:';
     const saved = localStorage.getItem('taskforge_api_base');
@@ -23,18 +23,25 @@ export const getApiBase = () => {
       }
     }
 
+    const rawEnv = (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE || '').trim();
+    if (rawEnv && !rawEnv.includes('<YOUR-ACTIVE-BACKEND-URL>')) {
+      let envBase = rawEnv.replace(/\/+$/, '');
+      envBase = envBase.replace(/taskforge-backend-ta4[1i]\.onrender\.com/g, 'taskforge-bd.onrender.com');
+      if (!envBase.endsWith('/api')) envBase = `${envBase}/api`;
+      return envBase;
+    }
+
     if (isHttps) {
       return DEFAULT_PROD_BACKEND_URL;
     }
   }
 
-  if (import.meta.env.VITE_API_BASE) {
-    let envBase = import.meta.env.VITE_API_BASE.trim().replace(/\/+$/, '');
-    if (!envBase.includes('<YOUR-ACTIVE-BACKEND-URL>')) {
-      envBase = envBase.replace(/taskforge-backend-ta4[1i]\.onrender\.com/g, 'taskforge-bd.onrender.com');
-      if (!envBase.endsWith('/api')) envBase = `${envBase}/api`;
-      return envBase;
-    }
+  const rawEnv = (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE || '').trim();
+  if (rawEnv && !rawEnv.includes('<YOUR-ACTIVE-BACKEND-URL>')) {
+    let envBase = rawEnv.replace(/\/+$/, '');
+    envBase = envBase.replace(/taskforge-backend-ta4[1i]\.onrender\.com/g, 'taskforge-bd.onrender.com');
+    if (!envBase.endsWith('/api')) envBase = `${envBase}/api`;
+    return envBase;
   }
 
   return DEFAULT_LOCAL_BACKEND_URL;
@@ -89,34 +96,31 @@ export async function checkBackendHealth(): Promise<boolean> {
     const currentBase = getApiBase();
     const rootBase = currentBase.replace(/\/api\/?$/, '');
 
-    // 1. Unauthenticated root /health check (Simple CORS request, avoids preflight)
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 7000);
-    try {
-      const res = await fetch(`${rootBase}/health`, {
-        method: 'GET',
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-      if (res.ok || res.status === 200 || res.status === 304) return true;
-    } catch (e) {
-      clearTimeout(timeoutId);
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+    const res = await fetch(`${rootBase}/health`, {
+      method: 'GET',
+      mode: 'cors',
+      cache: 'no-store',
+      signal: controller.signal,
+    }).catch(() => null);
+
+    clearTimeout(timeoutId);
+
+    if (res && (res.ok || res.status === 200 || res.status === 304)) {
+      return true;
     }
 
-    // 2. Unauthenticated /api/health check
-    try {
-      const apiRes = await fetch(`${currentBase}/health`, { method: 'GET' });
-      if (apiRes.ok || apiRes.status === 200 || apiRes.status === 304) return true;
-    } catch (e) {}
+    // Secondary attempt with /api/health
+    const apiRes = await fetch(`${currentBase}/health`, {
+      method: 'GET',
+      mode: 'cors',
+      cache: 'no-store',
+    }).catch(() => null);
 
-    // 3. Fallback reachability check (any HTTP status < 500 proves the server is reachable and online)
-    try {
-      const fallbackRes = await fetch(`${currentBase}/workflows`, { method: 'GET' });
-      if (fallbackRes.status < 500) return true;
-    } catch (e) {}
-
-    return false;
-  } catch (err) {
+    return !!(apiRes && (apiRes.ok || apiRes.status === 200));
+  } catch {
     return false;
   }
 }

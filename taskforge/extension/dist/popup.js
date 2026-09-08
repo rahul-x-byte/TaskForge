@@ -20,25 +20,30 @@ document.addEventListener('DOMContentLoaded', () => {
         if (authTokenInput) {
             authTokenInput.value = result.authToken || '';
         }
-        // Auto-sync token from active TaskForge dashboard tab if missing or if tab has newer session
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-            const tab = tabs[0];
-            if (tab && tab.id && tab.url && (tab.url.includes('vercel.app') || tab.url.includes('localhost') || tab.url.includes('taskforge'))) {
-                chrome.scripting.executeScript({
-                    target: { tabId: tab.id },
-                    func: () => localStorage.getItem('taskforge_auth_token'),
-                }, (results) => {
-                    const activeToken = results?.[0]?.result;
-                    if (activeToken && typeof activeToken === 'string' && activeToken !== result.authToken) {
-                        chrome.storage.local.set({ authToken: activeToken });
-                        if (authTokenInput) {
-                            authTokenInput.value = activeToken;
+        // Multi-tab Auto-sync: Find any open TaskForge dashboard tab and extract token
+        const syncTokenFromTabs = () => {
+            chrome.tabs.query({}, (tabs) => {
+                const dashboardTabs = tabs.filter((t) => t.id && t.url && (t.url.includes('vercel.app') || t.url.includes('localhost') || t.url.includes('127.0.0.1') || t.url.includes('taskforge')));
+                for (const tab of dashboardTabs) {
+                    if (!tab.id)
+                        continue;
+                    chrome.scripting.executeScript({
+                        target: { tabId: tab.id },
+                        func: () => localStorage.getItem('taskforge_auth_token'),
+                    }, (results) => {
+                        const activeToken = results?.[0]?.result;
+                        if (activeToken && typeof activeToken === 'string' && activeToken.trim()) {
+                            chrome.storage.local.set({ authToken: activeToken.trim() });
+                            if (authTokenInput) {
+                                authTokenInput.value = activeToken.trim();
+                            }
+                            loadWorkflows();
                         }
-                        loadWorkflows();
-                    }
-                });
-            }
-        });
+                    });
+                }
+            });
+        };
+        syncTokenFromTabs();
     });
     if (backendUrlInput) {
         backendUrlInput.addEventListener('change', () => {
@@ -153,7 +158,13 @@ document.addEventListener('DOMContentLoaded', () => {
     loadWorkflows();
     toggleBtn.addEventListener('click', () => {
         const currentBackendUrl = backendUrlInput?.value.trim() || DEFAULT_BACKEND_URL;
-        chrome.storage.local.set({ backendUrl: currentBackendUrl });
+        const currentAuthToken = authTokenInput?.value.trim() || '';
+        if (currentAuthToken) {
+            chrome.storage.local.set({ backendUrl: currentBackendUrl, authToken: currentAuthToken });
+        }
+        else {
+            chrome.storage.local.set({ backendUrl: currentBackendUrl });
+        }
         chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (res) => {
             if (res && res.isRecording) {
                 // Stop recording

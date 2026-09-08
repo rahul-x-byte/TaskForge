@@ -50,6 +50,11 @@ export async function verifySupabaseToken(authHeader?: string): Promise<AuthUser
             name = prof.name || name;
             role = prof.role || 'user';
           }
+          // Ensure profile exists in pool to guarantee foreign key referential integrity
+          await pool.query(
+            'INSERT INTO profiles (id, name, email, role) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING',
+            [u.id, name, u.email || '', role]
+          ).catch(() => {});
         }
       } catch (e) {}
 

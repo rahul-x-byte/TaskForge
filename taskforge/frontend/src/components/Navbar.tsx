@@ -18,7 +18,8 @@ export const Navbar: React.FC = () => {
       if (isMounted) setIsConnected(ok);
     };
     verifyHealth();
-    const interval = setInterval(verifyHealth, 6000);
+    // Relaxed interval (30s) prevents spamming and client-side adblocker blocking
+    const interval = setInterval(verifyHealth, 30000);
     return () => {
       isMounted = false;
       clearInterval(interval);

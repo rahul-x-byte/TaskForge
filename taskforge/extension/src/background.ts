@@ -41,8 +41,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'STOP_RECORDING') {
     chrome.storage.local.get(['recordingQueue'], async (result) => {
       const queue = result.recordingQueue || [];
-      console.log('[TaskForge Background] Recording stopped. Total steps recorded:', queue.length);
-      console.log('[TaskForge Background] Recorded sequence JSON:', JSON.stringify(queue, null, 2));
+      console.log('[TaskForge] Recording stopped');
+      console.log(`[TaskForge] Actions: ${queue.length}`);
 
       await chrome.storage.local.set({ isRecording: false });
 
@@ -50,13 +50,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const storage = await chrome.storage.local.get(['backendUrl', 'authToken']);
       const rawBackend = message.backendUrl || storage.backendUrl || DEFAULT_BACKEND_URL;
       const backendUrl = normalizeRecordingsUrl(rawBackend);
-      console.log('[TaskForge Background] Posting recording to normalized URL:', backendUrl);
+      console.log(`[TaskForge] POST ${backendUrl}`);
 
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
       };
       if (storage.authToken) {
         headers['Authorization'] = `Bearer ${storage.authToken}`;
+      } else {
+        console.warn('[TaskForge] No auth token found in extension storage. Ensure you are logged into the TaskForge dashboard.');
       }
 
       try {
@@ -69,21 +71,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }),
         });
 
+        console.log(`[TaskForge] Response status: ${response.status}`);
+
         if (response.ok) {
           const resData = await response.json();
-          console.log('[TaskForge Background] Successfully posted recording to backend:', resData);
+          console.log(`[TaskForge] Workflow created: ${resData.workflowId}`);
           sendResponse({ status: 'success', data: resData, queue });
         } else {
-          console.error('[TaskForge Background] Failed to post recording. Status:', response.status);
-          const renderRoutingHeader = response.headers.get('x-render-routing');
+          console.warn(`[TaskForge] Recording save failed with status: ${response.status}`);
           let errMsg = `HTTP ${response.status} from backend`;
-          if (renderRoutingHeader === 'no-server' || response.status === 404) {
-            errMsg = `Backend URL invalid or service not found on Render (${backendUrl}). Please check your active URL in Render Dashboard.`;
+          if (response.status === 401) {
+            errMsg = 'Authentication required (401). Please open or refresh your TaskForge dashboard tab to sync your login, or copy your token.';
+          } else if (response.status === 404) {
+            errMsg = `Backend endpoint not found (404) at ${backendUrl}. Check backend status.`;
           }
           sendResponse({ status: 'error', statusCode: response.status, error: errMsg, queue });
         }
       } catch (err: any) {
-        console.error('[TaskForge Background] Network error posting recording:', err);
+        console.error('[TaskForge] Network error posting recording:', err?.message || err);
         sendResponse({ status: 'error', error: err?.message || 'Network error', queue });
       }
     });
