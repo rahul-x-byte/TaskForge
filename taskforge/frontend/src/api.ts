@@ -163,6 +163,7 @@ export interface RunItem {
   finished_at?: string;
   current_step_index?: number;
   detail?: any;
+  error?: string;
 }
 
 export interface UserItem {

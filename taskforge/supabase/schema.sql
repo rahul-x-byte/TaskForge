@@ -43,7 +43,9 @@ CREATE TABLE IF NOT EXISTS public.runs (
     version_id UUID REFERENCES public.workflow_versions(id) ON DELETE CASCADE,
     status TEXT NOT NULL,
     started_at TIMESTAMPTZ DEFAULT now(),
-    finished_at TIMESTAMPTZ
+    finished_at TIMESTAMPTZ,
+    error TEXT,
+    detail JSONB
 );
 
 CREATE INDEX IF NOT EXISTS idx_runs_workflow_id ON public.runs(workflow_id);

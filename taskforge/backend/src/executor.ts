@@ -18,6 +18,13 @@ if (!fs.existsSync(FAILURES_DIR)) fs.mkdirSync(FAILURES_DIR, { recursive: true }
 
 const WORKER_SECRET = process.env.WORKER_SECRET || 'taskforge-worker-secret-key-2026';
 
+export class ElementNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ElementNotFoundError';
+  }
+}
+
 async function uploadResultFileToBackend(runId: string, filePath: string) {
   if (!filePath || !fs.existsSync(filePath)) return;
   try {
@@ -44,46 +51,125 @@ async function uploadResultFileToBackend(runId: string, filePath: string) {
   }
 }
 
-// Multi-Strategy Selector Resolver (VideoID -> Role -> Text -> TestID -> CSS)
-async function resolveSelector(page: Page, selectors: SelectorBundle, timeoutMs = 300): Promise<Locator> {
-  if (!selectors) return page.locator('body').first();
+interface ResolvedTarget {
+  locator: Locator;
+  strategy: string;
+  description: string;
+  matches: number;
+}
 
-  if (selectors.css && selectors.css !== 'body' && selectors.css !== 'html') {
-    try {
-      const loc = page.locator(selectors.css);
-      if (await loc.count().catch(() => 0) > 0) return loc.first();
-    } catch (e) {}
+// Multi-Strategy Selector Resolver (VideoID -> Role + Name -> TestID -> Stable CSS -> Visible Text -> Interactive Ancestor)
+// STRICT: Never falls back to BODY. Throws ElementNotFoundError if no matching interactive element is found.
+async function resolveInteractiveTarget(
+  page: Page,
+  step: RecordedAction,
+  timeoutMs = 8000
+): Promise<ResolvedTarget> {
+  const selectors = step.selectors;
+  if (!selectors) {
+    throw new ElementNotFoundError(`No selectors provided for step action "${step.action}"`);
   }
 
-  if (selectors.videoId) {
+  const isClickAction = step.action === 'click' || step.action === 'submit';
+  const isInputAction = step.action === 'input' || step.action === 'change';
+  const attempted: string[] = [];
+
+  async function testCandidate(locator: Locator, strategyName: string, desc: string): Promise<ResolvedTarget | null> {
+    attempted.push(strategyName);
     try {
-      const loc = page.locator(`a[href*="${selectors.videoId}"]`);
-      if (await loc.count().catch(() => 0) > 0) return loc.first();
-    } catch (e) {}
+      await locator.first().waitFor({ state: 'attached', timeout: Math.min(timeoutMs, 3000) });
+      const count = await locator.count();
+      if (count === 0) return null;
+
+      let targetLoc = locator.first();
+
+      if (isInputAction) {
+        const tagName = await targetLoc.evaluate((el: any) => el.tagName ? el.tagName.toLowerCase() : '').catch(() => '');
+        const isContentEditable = await targetLoc.evaluate((el: any) => !!el.isContentEditable).catch(() => false);
+        if (!['input', 'textarea', 'select'].includes(tagName) && !isContentEditable) {
+          const innerInput = targetLoc.locator('input, textarea, select, [contenteditable="true"]').first();
+          if (await innerInput.count().catch(() => 0) > 0) {
+            targetLoc = innerInput;
+          }
+        }
+        await targetLoc.waitFor({ state: 'visible', timeout: 3000 });
+        const isEditable = await targetLoc.isEditable({ timeout: 2000 }).catch(() => true);
+        if (!isEditable) return null;
+      }
+
+      if (isClickAction) {
+        await targetLoc.waitFor({ state: 'visible', timeout: 3000 });
+        const isEnabled = await targetLoc.isEnabled({ timeout: 2000 }).catch(() => true);
+        if (!isEnabled) return null;
+      }
+
+      return { locator: targetLoc, strategy: strategyName, description: desc, matches: count };
+    } catch {
+      return null;
+    }
   }
 
-  if (selectors.testId) {
-    try {
-      const loc = page.getByTestId(selectors.testId);
-      if (await loc.count().catch(() => 0) > 0) return loc.first();
-    } catch (e) {}
+  // 1. Video ID strategy (e.g. YouTube video links)
+  if (selectors.videoId && typeof selectors.videoId === 'string' && selectors.videoId !== 'true' && selectors.videoId !== 'false') {
+    const vid = selectors.videoId;
+    const loc = page.locator(`a[href*="v=${vid}"], a[href*="/shorts/${vid}"], a[href*="${vid}"]`);
+    const found = await testCandidate(loc, 'videoId', `videoId=${vid}`);
+    if (found) return found;
   }
 
-  if (selectors.role && selectors.name) {
+  // 2. Role + Accessible Name
+  if (selectors.role && selectors.name && typeof selectors.role === 'string' && typeof selectors.name === 'string' && selectors.name !== 'true' && selectors.name !== 'false') {
     try {
       const loc = page.getByRole(selectors.role as any, { name: selectors.name });
-      if (await loc.count().catch(() => 0) > 0) return loc.first();
-    } catch (e) {}
-  }
+      const found = await testCandidate(loc, 'role+name', `role=${selectors.role} name="${selectors.name}"`);
+      if (found) return found;
+    } catch {}
 
-  if (selectors.text && selectors.text.length < 100) {
     try {
-      const loc = page.getByText(selectors.text);
-      if (await loc.count().catch(() => 0) > 0) return loc.first();
-    } catch (e) {}
+      const escaped = selectors.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const loc = page.getByRole(selectors.role as any, { name: new RegExp(escaped, 'i') });
+      const found = await testCandidate(loc, 'role+name(regex)', `role=${selectors.role} name=~/${selectors.name}/i`);
+      if (found) return found;
+    } catch {}
   }
 
-  return page.locator(selectors.css || 'body').first();
+  // 3. TestID
+  if (selectors.testId && typeof selectors.testId === 'string' && selectors.testId !== 'true' && selectors.testId !== 'false') {
+    const loc = page.getByTestId(selectors.testId);
+    const found = await testCandidate(loc, 'testId', `testId=${selectors.testId}`);
+    if (found) return found;
+  }
+
+  // 4. Stable CSS (reject body, html, window, empty)
+  if (selectors.css && typeof selectors.css === 'string' && selectors.css !== 'true' && selectors.css !== 'false') {
+    const cleanCss = selectors.css.trim();
+    if (cleanCss && cleanCss !== 'body' && cleanCss !== 'html' && cleanCss !== 'window') {
+      const loc = page.locator(cleanCss);
+      const found = await testCandidate(loc, 'css', `css=${cleanCss}`);
+      if (found) return found;
+    }
+  }
+
+  // 5. Visible Text
+  if (selectors.text && typeof selectors.text === 'string' && selectors.text !== 'true' && selectors.text !== 'false' && selectors.text.length < 100) {
+    const loc = page.getByText(selectors.text, { exact: false });
+    const found = await testCandidate(loc, 'text', `text="${selectors.text}"`);
+    if (found) return found;
+  }
+
+  // 6. Semantic interactive ancestor (if css was on a child icon/img, climb to button/a)
+  if (selectors.css && selectors.css !== 'body' && selectors.css !== 'html' && selectors.css !== 'window') {
+    try {
+      const parentLoc = page.locator(selectors.css).locator('xpath=ancestor-or-self::*[self::a or self::button or self::input or self::select or self::textarea or @role="button" or @role="link" or @role="combobox"]').first();
+      const found = await testCandidate(parentLoc, 'interactive-ancestor', `ancestor of ${selectors.css}`);
+      if (found) return found;
+    } catch {}
+  }
+
+  // Fail strictly: NEVER return body for interactive operations
+  throw new ElementNotFoundError(
+    `ElementNotFoundError: Could not resolve interactive target for action "${step.action}". Attempted strategies: [${attempted.join(', ')}]. Selectors: ${JSON.stringify(selectors)}`
+  );
 }
 
 // Poll DB/Backend for Approval Gate Resolution
@@ -95,7 +181,7 @@ async function waitForApprovalGate(page: Page | null, runId: string, stepIndex: 
 
   await fetch(`${backendUrl}/api/runs/${runId}/status`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': WORKER_SECRET },
     body: JSON.stringify({
       status: 'awaiting_approval',
       detail: {
@@ -114,7 +200,9 @@ async function waitForApprovalGate(page: Page | null, runId: string, stepIndex: 
   while (Date.now() - startTime < APPROVAL_TIMEOUT_MS) {
     await new Promise((resolve) => setTimeout(resolve, 1500));
     try {
-      const res = await fetch(`${backendUrl}/api/runs/${runId}`);
+      const res = await fetch(`${backendUrl}/api/runs/${runId}`, {
+        headers: { 'X-Worker-Secret': WORKER_SECRET },
+      });
       if (res.ok) {
         const data: any = await res.json();
         const currentStatus = data.run?.status;
@@ -133,10 +221,10 @@ async function waitForApprovalGate(page: Page | null, runId: string, stepIndex: 
       if (page && !page.isClosed()) {
         const currentUrl = page.url();
         if (initialUrl && currentUrl !== initialUrl && !currentUrl.includes('/login')) {
-          console.log(`[Approval Gate] Detected in-browser navigation to ${currentUrl}. Auto-granting approval!`);
+          console.log(`[Approval Gate] Detected in-browser form submission & page navigation to ${currentUrl}. Auto-granting approval!`);
           await fetch(`${backendUrl}/api/runs/${runId}/status`, {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': WORKER_SECRET },
             body: JSON.stringify({
               status: 'running',
               detail: { stepIndex, action: stepDetail.action, targetLabel, pageUrl: currentUrl, totalSteps },
@@ -150,6 +238,16 @@ async function waitForApprovalGate(page: Page | null, runId: string, stepIndex: 
     }
   }
 
+  console.log(`[Approval Gate Timeout] Run ${runId} timed out after 15 minutes awaiting approval.`);
+  await fetch(`${backendUrl}/api/runs/${runId}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': WORKER_SECRET },
+    body: JSON.stringify({
+      status: 'timed_out',
+      finishedAt: new Date().toISOString(),
+      error: 'Approval gate timed out after 15 minutes',
+    }),
+  }).catch(() => {});
   return false;
 }
 
@@ -158,17 +256,17 @@ async function waitForCredentialsGate(page: Page | null, runId: string, stepInde
   const backendUrl = resolveBackendUrl();
   const fieldLabel = stepDetail.selectors?.name || stepDetail.selectors?.css || 'Password';
   const initialUrl = page && !page.isClosed() ? page.url() : '';
-  console.log(`[Credentials Gate] Run ${runId} paused at step ${stepIndex + 1} for login/credentials (${fieldLabel}).`);
+  console.log(`[Interactive Login & Credentials Gate] Run ${runId} paused at step ${stepIndex + 1} for login/credentials (${fieldLabel}). Awaiting user input or in-browser login...`);
 
   await fetch(`${backendUrl}/api/runs/${runId}/status`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': WORKER_SECRET },
     body: JSON.stringify({
       status: 'awaiting_login',
       detail: {
         stepIndex,
         fieldLabel,
-        message: 'Please enter credentials or log in in the open browser window.',
+        message: 'Please enter credentials or log in & solve CAPTCHA in the open browser window. TaskForge will auto-resume once logged in!',
       },
     }),
   }).catch(() => {});
@@ -179,10 +277,13 @@ async function waitForCredentialsGate(page: Page | null, runId: string, stepInde
   while (Date.now() - startTime < CREDENTIAL_TIMEOUT_MS) {
     await new Promise((resolve) => setTimeout(resolve, 1500));
     try {
-      const credRes = await fetch(`${backendUrl}/api/runs/${runId}/credentials`);
+      const credRes = await fetch(`${backendUrl}/api/runs/${runId}/credentials`, {
+        headers: { 'X-Worker-Secret': WORKER_SECRET },
+      });
       if (credRes.ok) {
         const credData: any = await credRes.json();
         if (credData.found && credData.credential?.value !== undefined) {
+          console.log(`[Credentials Gate] Credential received via UI for run ${runId} step ${stepIndex + 1}. Resuming execution.`);
           return credData.credential.value;
         }
       }
@@ -190,26 +291,42 @@ async function waitForCredentialsGate(page: Page | null, runId: string, stepInde
       if (page && !page.isClosed()) {
         const currentUrl = page.url();
         if (initialUrl && currentUrl !== initialUrl && !currentUrl.includes('/login')) {
+          console.log(`[Interactive Login Gate] Detected in-browser login & navigation to ${currentUrl}. Auto-resuming workflow execution!`);
           await fetch(`${backendUrl}/api/runs/${runId}/status`, {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': WORKER_SECRET },
             body: JSON.stringify({ status: 'running' }),
           }).catch(() => {});
           return '[IN_BROWSER_LOGGED_IN]';
         }
       }
 
-      const runRes = await fetch(`${backendUrl}/api/runs/${runId}`);
+      const runRes = await fetch(`${backendUrl}/api/runs/${runId}`, {
+        headers: { 'X-Worker-Secret': WORKER_SECRET },
+      });
       if (runRes.ok) {
         const data: any = await runRes.json();
         const currentStatus = data.run?.status;
         if (currentStatus === 'cancelled' || currentStatus === 'failed') {
+          console.log(`[Credentials Gate] Run ${runId} was cancelled/aborted.`);
           return null;
         }
       }
-    } catch (err) {}
+    } catch (err) {
+      console.warn(`[Credentials Gate Polling Warning]`, err);
+    }
   }
 
+  console.log(`[Credentials Gate Timeout] Run ${runId} timed out after 15 minutes awaiting credentials or login.`);
+  await fetch(`${backendUrl}/api/runs/${runId}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': WORKER_SECRET },
+    body: JSON.stringify({
+      status: 'timed_out',
+      finishedAt: new Date().toISOString(),
+      error: 'Credential entry / login timed out after 15 minutes',
+    }),
+  }).catch(() => {});
   return null;
 }
 
@@ -221,6 +338,9 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
 
   const timestamp = Date.now();
   let currentStepIndex = 0;
+  let currentAction = 'init';
+  let currentTargetLabel = '';
+  let currentStrategy = '';
   let downloadedFilePath: string | null = null;
   let isRunApproved = false;
 
@@ -228,7 +348,7 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
     let rawSteps: (RecordedAction & { isSensitive?: boolean })[] = [];
     let workflowName = `Workflow ${workflowId}`;
 
-    // 1. Direct DB / memory pool query (instant, no network overhead)
+    // 1. Direct DB pool query (fastest, no network roundtrip)
     try {
       const wfRow = await pool.query('SELECT * FROM workflows WHERE id = $1', [workflowId]);
       if (wfRow.rows.length > 0) {
@@ -241,7 +361,7 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
       }
     } catch (dbErr) {}
 
-    // 2. HTTP fallback with X-Worker-Secret header
+    // HTTP fallback with X-Worker-Secret header
     if (rawSteps.length === 0) {
       const wfRes = await fetch(`${backendUrl}/api/workflows/${workflowId}`, {
         headers: { 'X-Worker-Secret': WORKER_SECRET },
@@ -255,18 +375,27 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
       }
     }
 
+    if (!Array.isArray(rawSteps) || rawSteps.length === 0) {
+      throw new Error(`Workflow ${workflowId} contains no execution steps`);
+    }
+
     console.log(`[Executor] Starting execution for Run ${runId} (Workflow: ${workflowName}, Total Steps: ${rawSteps.length})`);
 
+    // Broadcast running status
     await fetch(`${backendUrl}/api/runs/${runId}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': WORKER_SECRET },
-      body: JSON.stringify({ status: 'running' }),
-    }).catch(() => {});
+      body: JSON.stringify({
+        status: 'running',
+        detail: { stepIndex: 0, totalSteps: rawSteps.length, status: 'running' },
+      }),
+    });
 
-    // Try launching Playwright Chromium; fallback to simulation mode if browser binary missing on cloud server
-    const isHeadless = process.env.HEADLESS === 'true' || process.env.NODE_ENV === 'production' || !!process.env.RENDER || true;
+    // 2. Launch Browser & Tracing (NO SIMULATION MODE - Chromium launch failure MUST fail the run)
+    const isHeadless = process.env.HEADLESS !== 'false';
+    console.log(`[Executor] Launching Chromium (headless: ${isHeadless})...`);
+
     try {
-      // Dynamic import to prevent ERR_MODULE_NOT_FOUND if playwright is not installed on host
       let pwModule: any = null;
       try {
         // @ts-ignore
@@ -274,129 +403,196 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
       } catch (e) {}
 
       const chromium = pwModule?.default?.chromium || pwModule?.chromium;
-      if (chromium) {
-        browser = await chromium.launch({
-          headless: isHeadless,
-          args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-        });
-        context = await browser.newContext({ acceptDownloads: true });
-        await context.tracing.start({ screenshots: true, snapshots: true });
-        page = await context.newPage();
-      } else {
-        console.warn(`[Executor] Playwright module unavailable on host. Progressing run steps in simulation mode.`);
+      if (!chromium) {
+        throw new Error('Playwright Chromium could not be launched: playwright module is not installed or available on this host');
       }
 
-      page.on('download', async (download: any) => {
+      browser = await chromium.launch({
+        headless: isHeadless,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      });
+      context = await browser.newContext({ acceptDownloads: true });
+      await context.tracing.start({ screenshots: true, snapshots: true });
+      page = await context.newPage();
+    } catch (launchErr: any) {
+      throw new Error(`Playwright Chromium could not be launched: ${launchErr?.message || launchErr}`);
+    }
+
+    // Global Download Handler: Automatically catch and save downloaded files
+    page.on('download', async (download: any) => {
+      try {
+        const origFilename = download.suggestedFilename() || `result_download_${Date.now()}.pdf`;
+        const destPath = path.join(DOWNLOADS_DIR, origFilename);
+        await download.saveAs(destPath);
+        downloadedFilePath = destPath;
+        console.log(`[Executor Global Download Handler] Successfully saved file download to: ${destPath}`);
+        await uploadResultFileToBackend(runId, destPath);
+      } catch (dErr) {
+        console.error(`[Executor Global Download Error] Failed to save download:`, dErr);
+      }
+    });
+
+    // New Tab & Popup Download Handler
+    context.on('page', async (newPage: any) => {
+      newPage.on('download', async (download: any) => {
         try {
-          const origFilename = download.suggestedFilename() || `result_download_${Date.now()}.pdf`;
+          const origFilename = download.suggestedFilename() || `result_report_${Date.now()}.pdf`;
           const destPath = path.join(DOWNLOADS_DIR, origFilename);
           await download.saveAs(destPath);
           downloadedFilePath = destPath;
+          console.log(`[Executor Popup Tab Download] Saved file to: ${destPath}`);
           await uploadResultFileToBackend(runId, destPath);
-        } catch (dErr) {}
+        } catch (e) {}
       });
+    });
 
-      context.on('page', async (newPage: any) => {
-        newPage.on('download', async (download: any) => {
-          try {
-            const origFilename = download.suggestedFilename() || `result_report_${Date.now()}.pdf`;
-            const destPath = path.join(DOWNLOADS_DIR, origFilename);
-            await download.saveAs(destPath);
-            downloadedFilePath = destPath;
-            await uploadResultFileToBackend(runId, destPath);
-          } catch (e) {}
-        });
-
-        newPage.on('response', async (res: any) => {
-          try {
-            const ct = res.headers()['content-type'] || '';
-            const resUrl = res.url();
-            if (ct.includes('application/pdf') || ct.includes('application/octet-stream') || resUrl.endsWith('.pdf')) {
-              const buffer = await res.body();
-              const filename = `result_report_${Date.now()}.pdf`;
-              const destPath = path.join(DOWNLOADS_DIR, filename);
-              fs.writeFileSync(destPath, buffer);
-              downloadedFilePath = destPath;
-              await uploadResultFileToBackend(runId, destPath);
-            }
-          } catch (e) {}
-        });
-      });
-    } catch (launchErr: any) {
-      console.warn(`[Executor] Chromium launch unavailable on server (${launchErr?.message}). Progressing run steps in simulation mode.`);
-    }
-
-    // Step Execution Loop
+    // 3. Step Execution Loop (Strict execution - any step failure terminates the run with FAILED status)
     for (let i = 0; i < rawSteps.length; i++) {
       currentStepIndex = i;
       const step = rawSteps[i];
-      const targetLabel = step.selectors?.name || step.selectors?.text || step.selectors?.css || 'Target element';
-      console.log(`[Executor] Step ${i + 1}/${rawSteps.length}: ${step.action} on ${targetLabel}`);
+      currentAction = step.action;
+      currentTargetLabel = (typeof step.selectors?.name === 'string' && step.selectors.name !== 'true' && step.selectors.name !== 'false' && step.selectors.name) ||
+                           (typeof step.selectors?.text === 'string' && step.selectors.text !== 'true' && step.selectors.text !== 'false' && step.selectors.text) ||
+                           (typeof step.selectors?.videoId === 'string' && `videoId:${step.selectors.videoId}`) ||
+                           (typeof step.selectors?.css === 'string' && step.selectors.css !== 'true' && step.selectors.css) ||
+                           step.value ||
+                           step.pageUrl ||
+                           'Target element';
 
+      console.log(`\n========================================`);
+      console.log(`[Executor] Step ${i + 1}/${rawSteps.length}`);
+      console.log(`[Executor] action=${step.action}`);
+      if (step.pageUrl) console.log(`[Executor] targetUrl=${step.pageUrl}`);
+      console.log(`[Executor] targetLabel=${currentTargetLabel}`);
+      console.log(`========================================`);
+
+      // Broadcast current step progress to backend & dashboard
       await fetch(`${backendUrl}/api/runs/${runId}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': WORKER_SECRET },
         body: JSON.stringify({
           status: 'running',
-          detail: { stepIndex: i, action: step.action, targetLabel, pageUrl: step.pageUrl || '', totalSteps: rawSteps.length },
+          detail: {
+            stepIndex: i,
+            action: step.action,
+            targetLabel: currentTargetLabel,
+            pageUrl: page.url() || step.pageUrl || '',
+            totalSteps: rawSteps.length,
+            status: 'running',
+          },
         }),
       }).catch(() => {});
 
-      try {
-        const isSensitive = step.isSensitive === true;
-        if (isSensitive && !isRunApproved) {
-          const approved = await waitForApprovalGate(page, runId, i, step, rawSteps.length);
-          if (!approved) {
-            console.warn(`[Executor Warning] Step ${i + 1} approval gate passed/skipped. Continuing remaining workflow steps...`);
-          } else {
-            isRunApproved = true;
-          }
+      // Sensitive action approval gate check
+      const isSensitive = step.isSensitive === true;
+      if (isSensitive && !isRunApproved) {
+        const approved = await waitForApprovalGate(page, runId, i, step, rawSteps.length);
+        if (!approved) {
+          throw new Error(`Step ${i + 1} (${step.action}) was rejected or timed out at approval gate`);
         }
-
-        if (page) {
-          if (step.action === 'navigate') {
-            const targetUrl = step.value || step.pageUrl || 'http://localhost:3001/login';
-            await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
-          } else if (step.action === 'input' || step.action === 'change') {
-            const locator = await resolveSelector(page, step.selectors, 300);
-            let inputValue = step.value || '';
-            const isPasswordInput = inputValue === '[REDACTED]' || step.selectors?.inputType === 'password';
-
-            if (isPasswordInput) {
-              const userCredential = await waitForCredentialsGate(page, runId, i, step);
-              if (userCredential === null || userCredential === '[IN_BROWSER_LOGGED_IN]') {
-                console.log(`[Executor Info] Credentials gate completed/bypassed for step ${i + 1}. Continuing remaining tasks...`);
-                inputValue = '';
-              } else {
-                inputValue = userCredential;
-              }
-            }
-
-            if (inputValue) {
-              try {
-                await locator.fill(inputValue, { timeout: 3000 });
-              } catch (fillErr) {
-                await locator.click({ force: true }).catch(() => {});
-                await page.keyboard.type(inputValue).catch(() => {});
-              }
-            }
-          } else if (step.action === 'click' || step.action === 'submit') {
-            const locator = await resolveSelector(page, step.selectors, 300);
-            await locator.click({ timeout: 4000 }).catch(() => locator.click({ force: true, timeout: 2000 })).catch(() => {});
-          }
-        } else {
-          // Simulation delay per step if Chromium binary unavailable
-          await new Promise((r) => setTimeout(r, 400));
-        }
-      } catch (stepErr: any) {
-        console.warn(`[Executor Step Non-Blocking Error] Step ${i + 1} (${step.action}) encountered issue (${stepErr?.message}). Continuing remaining tasks...`);
+        isRunApproved = true;
       }
+
+      // Execute specific action type without swallowing errors
+      if (step.action === 'navigate') {
+        const targetUrl = step.value || step.pageUrl;
+        if (!targetUrl) {
+          throw new Error(`Step ${i + 1}: Navigate action missing target URL`);
+        }
+        console.log(`[Executor] Navigating to: ${targetUrl}`);
+        currentStrategy = 'navigation';
+        await page.goto(targetUrl, {
+          waitUntil: 'domcontentloaded',
+          timeout: 25000,
+        });
+        console.log(`[Executor] Navigation successful. Current page: ${page.url()}`);
+
+      } else if (step.action === 'input' || step.action === 'change') {
+        if (step.pageUrl) {
+          const currentUrl = page.url();
+          if (currentUrl === 'about:blank') {
+            console.log(`[Executor] Blank page detected. Navigating to step page: ${step.pageUrl}`);
+            await page.goto(step.pageUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+          }
+        }
+
+        const resolved = await resolveInteractiveTarget(page, step, 10000);
+        currentStrategy = resolved.strategy;
+        console.log(`[Executor] Element resolved strategy=${resolved.strategy} matches=${resolved.matches} desc="${resolved.description}"`);
+
+        let inputValue = step.value || '';
+        const isPasswordInput = inputValue === '[REDACTED]' || step.selectors?.inputType === 'password';
+
+        if (isPasswordInput) {
+          const userCredential = await waitForCredentialsGate(page, runId, i, step);
+          if (userCredential === null) {
+            throw new Error(`Step ${i + 1}: Credentials gate cancelled or timed out`);
+          }
+          if (userCredential === '[IN_BROWSER_LOGGED_IN]') {
+            console.log(`[Executor] In-browser login detected for step ${i + 1}. Step complete.`);
+            inputValue = '';
+          } else {
+            inputValue = userCredential;
+          }
+        }
+
+        if (inputValue) {
+          try {
+            await resolved.locator.fill(inputValue, { timeout: 8000 });
+          } catch (fillErr: any) {
+            await resolved.locator.click({ force: true, timeout: 4000 });
+            await page.keyboard.type(inputValue, { delay: 40 });
+          }
+
+          if (!isPasswordInput) {
+            const actualVal = await resolved.locator.inputValue({ timeout: 2000 }).catch(() => null);
+            if (actualVal !== null && actualVal !== inputValue) {
+              console.warn(`[Executor Input Note] Expected "${inputValue}", field currently contains "${actualVal}"`);
+            }
+          }
+        }
+        inputValue = '';
+        console.log(`[Executor] Input successful`);
+
+      } else if (step.action === 'click' || step.action === 'submit') {
+        if (step.pageUrl) {
+          const currentUrl = page.url();
+          if (currentUrl === 'about:blank') {
+            console.log(`[Executor] Blank page detected. Navigating to step page: ${step.pageUrl}`);
+            await page.goto(step.pageUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+          }
+        }
+
+        const resolved = await resolveInteractiveTarget(page, step, 10000);
+        currentStrategy = resolved.strategy;
+        console.log(`[Executor] Element resolved strategy=${resolved.strategy} matches=${resolved.matches} desc="${resolved.description}"`);
+
+        try {
+          await resolved.locator.click({ timeout: 10000 });
+        } catch (clickErr: any) {
+          console.warn(`[Executor] Normal click timed out, attempting force click...`);
+          await resolved.locator.click({ force: true, timeout: 5000 });
+        }
+        console.log(`[Executor] Click successful`);
+
+      } else {
+        console.log(`[Executor] Custom action "${step.action}" performed.`);
+      }
+
+      // Safe settling delay (400ms) between actions for DOM updates & page responsiveness
+      await page.waitForTimeout(400);
     }
 
+    // Stop Tracing on Success
     if (context) {
       await context.tracing.stop().catch(() => {});
     }
 
+    if (downloadedFilePath) {
+      await uploadResultFileToBackend(runId, downloadedFilePath);
+    }
+
+    // Mark Run Completed ONLY because all steps executed with real success
     await fetch(`${backendUrl}/api/runs/${runId}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': WORKER_SECRET },
@@ -408,19 +604,32 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
           downloadFilename: downloadedFilePath ? path.basename(downloadedFilePath) : null,
           downloadUrl: downloadedFilePath ? `/api/runs/${runId}/download` : null,
           previewUrl: downloadedFilePath ? `/api/runs/${runId}/preview` : null,
+          totalSteps: rawSteps.length,
+          status: 'completed',
         },
       }),
-    }).catch(() => {});
+    });
 
-    console.log(`[Executor] Run ${runId} completed successfully!`);
+    console.log(`\n========================================`);
+    console.log(`[Executor] Run ${runId} COMPLETED SUCCESSFULLY! All ${rawSteps.length} steps executed.`);
+    console.log(`========================================\n`);
     return true;
 
   } catch (error: any) {
-    console.error(`[Executor Error] Run ${runId} failed at step ${currentStepIndex + 1}:`, error?.message || error);
+    const rawErrorMessage = error?.message || String(error);
+    console.error(`\n[Executor Error] Run ${runId} FAILED at step ${currentStepIndex + 1} (${currentAction}):`, rawErrorMessage);
 
+    // Redact any tokens/credentials from error message
+    const safeErrorMessage = rawErrorMessage
+      .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [REDACTED]')
+      .replace(/password=[^&\s]+/gi, 'password=[REDACTED]');
+
+    // Check if run was cancelled by user
     let isCancelled = false;
     try {
-      const checkRes = await fetch(`${backendUrl}/api/runs/${runId}`, { headers: { 'X-Worker-Secret': WORKER_SECRET } });
+      const checkRes = await fetch(`${backendUrl}/api/runs/${runId}`, {
+        headers: { 'X-Worker-Secret': WORKER_SECRET },
+      });
       if (checkRes.ok) {
         const data: any = await checkRes.json();
         if (data.run?.status === 'cancelled') isCancelled = true;
@@ -428,18 +637,65 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
     } catch (cErr) {}
 
     if (!isCancelled) {
+      // Capture failure screenshot & trace artifacts
+      let screenshotUrl: string | null = null;
+      let traceUrl: string | null = null;
+
+      try {
+        if (page && !page.isClosed()) {
+          const screenshotPath = path.join(FAILURES_DIR, `failure_${runId}_${timestamp}.png`);
+          await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
+          if (fs.existsSync(screenshotPath)) {
+            screenshotUrl = screenshotPath;
+            console.log(`[Executor Failure Artifact] Screenshot saved: ${screenshotPath}`);
+          }
+        }
+      } catch (sErr) {
+        console.warn(`[Executor] Could not capture failure screenshot:`, sErr);
+      }
+
+      try {
+        if (context) {
+          const tracePath = path.join(FAILURES_DIR, `trace_${runId}_${timestamp}.zip`);
+          await context.tracing.stop({ path: tracePath }).catch(() => {});
+          if (fs.existsSync(tracePath)) {
+            traceUrl = tracePath;
+            console.log(`[Executor Failure Artifact] Playwright trace saved: ${tracePath}`);
+          }
+        }
+      } catch (tErr) {
+        console.warn(`[Executor] Could not capture Playwright trace:`, tErr);
+      }
+
+      // Mark Run as FAILED in backend & Supabase PostgreSQL
       await fetch(`${backendUrl}/api/runs/${runId}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': WORKER_SECRET },
         body: JSON.stringify({
           status: 'failed',
           finishedAt: new Date().toISOString(),
-          error: error?.message || 'Workflow execution failed',
-          detail: { failedStepIndex: currentStepIndex },
+          error: safeErrorMessage,
+          detail: {
+            failedStepIndex: currentStepIndex,
+            stepIndex: currentStepIndex,
+            action: currentAction,
+            targetLabel: currentTargetLabel,
+            selectorStrategy: currentStrategy,
+            pageUrl: page && !page.isClosed() ? page.url() : '',
+            status: 'failed',
+            error: safeErrorMessage,
+            screenshotUrl,
+            traceUrl,
+          },
         }),
-      }).catch(() => {});
+      }).catch((patchErr) => {
+        console.error(`[Executor] Failed to report failed status to backend:`, patchErr);
+      });
     }
 
     return false;
+
+  } finally {
+    console.log(`[Executor] Execution lifecycle ended for run ${runId}.`);
   }
 }

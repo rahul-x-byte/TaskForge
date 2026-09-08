@@ -142,8 +142,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                             return;
                         }
                         const currentStep = steps[stepIdx];
+                        const currentIdx = stepIdx;
                         stepIdx++;
-                        chrome.tabs.sendMessage(tabId, { type: 'EXECUTE_STEP', step: currentStep }, () => {
+                        chrome.tabs.sendMessage(tabId, { type: 'EXECUTE_STEP', step: currentStep }, (response) => {
+                            if (chrome.runtime.lastError || !response || response.status !== 'success') {
+                                const errMsg = response?.error || chrome.runtime.lastError?.message || `Step ${currentIdx + 1} failed (${response?.status || 'no_response'})`;
+                                console.error(`[TaskForge Background Execution Error] Step ${currentIdx + 1} failed:`, errMsg);
+                                sendResponse({
+                                    status: 'failed',
+                                    failedStepIndex: currentIdx,
+                                    error: errMsg,
+                                    action: currentStep.action,
+                                });
+                                return;
+                            }
                             setTimeout(runNextStep, 800);
                         });
                     };
@@ -239,7 +251,12 @@ async function checkAndExecutePendingRuns() {
                             return;
                         }
                         const currentStep = steps[stepIdx];
-                        const targetLabel = currentStep.selectors?.name || currentStep.selectors?.text || currentStep.selectors?.css || 'Target element';
+                        const currentIdx = stepIdx;
+                        const targetLabel = (typeof currentStep.selectors?.name === 'string' && currentStep.selectors.name !== 'true' && currentStep.selectors.name) ||
+                            (typeof currentStep.selectors?.text === 'string' && currentStep.selectors.text !== 'true' && currentStep.selectors.text) ||
+                            (typeof currentStep.selectors?.videoId === 'string' && `videoId:${currentStep.selectors.videoId}`) ||
+                            (typeof currentStep.selectors?.css === 'string' && currentStep.selectors.css !== 'true' && currentStep.selectors.css) ||
+                            currentStep.value || currentStep.pageUrl || 'Target element';
                         fetch(`${base}/runs/${runId}/status`, {
                             method: 'PATCH',
                             headers: { 'Content-Type': 'application/json' },
@@ -249,7 +266,30 @@ async function checkAndExecutePendingRuns() {
                             }),
                         }).catch(() => { });
                         stepIdx++;
-                        chrome.tabs.sendMessage(tabId, { type: 'EXECUTE_STEP', step: currentStep }, () => {
+                        chrome.tabs.sendMessage(tabId, { type: 'EXECUTE_STEP', step: currentStep }, (response) => {
+                            if (chrome.runtime.lastError || !response || response.status !== 'success') {
+                                const errMsg = response?.error || chrome.runtime.lastError?.message || `Step ${currentIdx + 1} execution failed (${response?.status || 'error'})`;
+                                console.error(`[Extension Poller Error] Step ${currentIdx + 1} failed:`, errMsg);
+                                fetch(`${base}/runs/${runId}/status`, {
+                                    method: 'PATCH',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        status: 'failed',
+                                        finishedAt: new Date().toISOString(),
+                                        error: errMsg,
+                                        detail: {
+                                            failedStepIndex: currentIdx,
+                                            stepIndex: currentIdx,
+                                            action: currentStep.action,
+                                            targetLabel,
+                                            pageUrl: currentStep.pageUrl || '',
+                                            status: 'failed',
+                                            error: errMsg,
+                                        },
+                                    }),
+                                }).catch(() => { });
+                                return; // STOP execution
+                            }
                             setTimeout(runNextStep, 900);
                         });
                     };

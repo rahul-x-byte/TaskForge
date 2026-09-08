@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { approveRunGate, cancelRunGate, fetchRunById, fetchWorkflowById, getWsBase, RunItem, WorkflowItem } from '../api';
+import { approveRunGate, cancelRunGate, fetchRunById, fetchWorkflowById, getWsBase, getApiBase, RunItem, WorkflowItem } from '../api';
 import { ArrowLeft, CheckCircle2, AlertTriangle, ShieldAlert, XCircle, KeyRound, Clock, FileText, Eye, Download } from 'lucide-react';
 
 interface RunStatusPageProps {
@@ -138,21 +138,55 @@ export const RunStatusPage: React.FC<RunStatusPageProps> = ({ runId, onBack }) =
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           {steps.map((step: any, idx: number) => {
             const activeStepIdx = run.detail?.stepIndex ?? run.current_step_index ?? 0;
-            const isCompleted = run.status === 'completed' || (run.status !== 'failed' && run.status !== 'cancelled' && idx < activeStepIdx);
-            const isCurrent = run.status !== 'completed' && run.status !== 'failed' && run.status !== 'cancelled' && idx === activeStepIdx;
+            const failedStepIdx = run.detail?.failedStepIndex ?? (run.status === 'failed' ? activeStepIdx : -1);
+
+            let stepState: 'completed' | 'failed' | 'running' | 'pending' = 'pending';
+            if (run.status === 'completed') {
+              stepState = 'completed';
+            } else if (run.status === 'failed') {
+              if (idx < failedStepIdx) {
+                stepState = 'completed';
+              } else if (idx === failedStepIdx) {
+                stepState = 'failed';
+              } else {
+                stepState = 'pending';
+              }
+            } else if (run.status === 'running' || run.status === 'awaiting_approval' || run.status === 'awaiting_login' || run.status === 'awaiting_credentials') {
+              if (idx < activeStepIdx) {
+                stepState = 'completed';
+              } else if (idx === activeStepIdx) {
+                stepState = 'running';
+              } else {
+                stepState = 'pending';
+              }
+            }
+
+            const isCompleted = stepState === 'completed';
+            const isFailed = stepState === 'failed';
+            const isCurrent = stepState === 'running';
             const isSensitive = step.isSensitive === true;
 
+            const targetDisplay = (typeof step.selectors?.name === 'string' && step.selectors.name !== 'true' && step.selectors.name !== 'false' && step.selectors.name) ||
+                                  (typeof step.selectors?.text === 'string' && step.selectors.text !== 'true' && step.selectors.text !== 'false' && step.selectors.text) ||
+                                  (typeof step.selectors?.videoId === 'string' && `videoId:${step.selectors.videoId}`) ||
+                                  (typeof step.selectors?.css === 'string' && step.selectors.css !== 'true' && step.selectors.css) ||
+                                  (typeof step.value === 'string' && step.value !== 'true' && step.value !== 'false' && step.value) ||
+                                  step.pageUrl ||
+                                  'Target element';
+
+            const errorMessage = isFailed ? (run.detail?.error || run.error || 'Execution failed on this step') : null;
+
             return (
-              <div key={idx} style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start', opacity: isCurrent || isCompleted ? 1 : 0.6 }}>
+              <div key={idx} style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start', opacity: isCurrent || isCompleted || isFailed ? 1 : 0.5 }}>
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                   <div
                     style={{
                       width: '28px',
                       height: '28px',
                       borderRadius: '50%',
-                      background: isCurrent ? '#38bdf8' : isCompleted ? '#059669' : (run.status === 'failed' || run.status === 'timed_out') && idx === activeStepIdx ? '#dc2626' : '#1e293b',
-                      border: isCurrent ? '2px solid #38bdf8' : isCompleted ? '2px solid #10b981' : '2px solid #475569',
-                      boxShadow: isCurrent ? '0 0 12px rgba(56, 189, 248, 0.6)' : 'none',
+                      background: isFailed ? '#dc2626' : isCurrent ? '#38bdf8' : isCompleted ? '#059669' : '#1e293b',
+                      border: isFailed ? '2px solid #ef4444' : isCurrent ? '2px solid #38bdf8' : isCompleted ? '2px solid #10b981' : '2px solid #475569',
+                      boxShadow: isFailed ? '0 0 12px rgba(239, 68, 68, 0.6)' : isCurrent ? '0 0 12px rgba(56, 189, 248, 0.6)' : 'none',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -161,29 +195,35 @@ export const RunStatusPage: React.FC<RunStatusPageProps> = ({ runId, onBack }) =
                       color: isCurrent ? '#0f172a' : '#ffffff',
                     }}
                   >
-                    {isCompleted ? <CheckCircle2 size={16} /> : idx + 1}
+                    {isCompleted ? <CheckCircle2 size={16} /> : isFailed ? <XCircle size={16} /> : idx + 1}
                   </div>
                   {idx < steps.length - 1 && (
-                    <div style={{ width: '2px', height: '32px', background: isCompleted ? '#10b981' : '#374151', margin: '4px 0' }} />
+                    <div style={{ width: '2px', height: '32px', background: isCompleted ? '#10b981' : isFailed ? '#ef4444' : '#374151', margin: '4px 0' }} />
                   )}
                 </div>
 
                 <div
                   style={{
                     flex: 1,
-                    background: isCurrent ? 'rgba(56, 189, 248, 0.08)' : '#1e293b',
+                    background: isFailed ? 'rgba(239, 68, 68, 0.08)' : isCurrent ? 'rgba(56, 189, 248, 0.08)' : '#1e293b',
                     padding: '0.75rem 1rem',
                     borderRadius: '8px',
-                    border: isCurrent ? '1px solid #38bdf8' : isCompleted ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid #374151',
-                    boxShadow: isCurrent ? '0 0 14px rgba(56, 189, 248, 0.15)' : 'none',
+                    border: isFailed ? '1px solid #ef4444' : isCurrent ? '1px solid #38bdf8' : isCompleted ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid #374151',
+                    boxShadow: isFailed ? '0 0 14px rgba(239, 68, 68, 0.15)' : isCurrent ? '0 0 14px rgba(56, 189, 248, 0.15)' : 'none',
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontWeight: 600, color: isCurrent ? '#38bdf8' : '#f8fafc', fontSize: '0.9rem' }}>
+                    <span style={{ fontWeight: 600, color: isFailed ? '#fca5a5' : isCurrent ? '#38bdf8' : '#f8fafc', fontSize: '0.9rem' }}>
                       Step {idx + 1}: {step.action}
                       {isCurrent && <span style={{ marginLeft: '8px', fontSize: '0.7rem', color: '#38bdf8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>● Current Step</span>}
+                      {isFailed && <span style={{ marginLeft: '8px', fontSize: '0.7rem', color: '#ef4444', textTransform: 'uppercase', letterSpacing: '0.05em' }}>● Failed Step</span>}
                     </span>
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      {isFailed && (
+                        <span className="badge" style={{ background: '#dc2626', color: '#fff', fontSize: '0.7rem', fontWeight: 700 }}>
+                          FAILED
+                        </span>
+                      )}
                       {isCurrent && run.status === 'awaiting_approval' && (
                         <span className="badge badge-awaiting_approval" style={{ fontSize: '0.7rem' }}>
                           <ShieldAlert size={12} /> Paused for Approval
@@ -209,9 +249,19 @@ export const RunStatusPage: React.FC<RunStatusPageProps> = ({ runId, onBack }) =
                       )}
                     </div>
                   </div>
+
                   <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '4px' }}>
-                    Target: {step.selectors?.text || step.selectors?.name || step.selectors?.css || step.value || step.pageUrl}
+                    Target: <span style={{ color: '#cbd5e1' }}>{targetDisplay}</span>
+                    {isFailed && run.detail?.selectorStrategy && (
+                      <span style={{ marginLeft: '8px', color: '#f87171' }}>({run.detail.selectorStrategy})</span>
+                    )}
                   </div>
+
+                  {isFailed && errorMessage && (
+                    <div style={{ marginTop: '8px', padding: '6px 10px', background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.4)', borderRadius: '6px', color: '#fca5a5', fontSize: '0.78rem', wordBreak: 'break-word' }}>
+                      {errorMessage}
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -278,7 +328,7 @@ export const RunStatusPage: React.FC<RunStatusPageProps> = ({ runId, onBack }) =
                     </button>
 
                     <a
-                      href={`http://localhost:3001/api/runs/${runId}/download`}
+                      href={`${getApiBase()}/runs/${runId}/download`}
                       download
                       style={{
                         display: 'flex',
@@ -309,10 +359,10 @@ export const RunStatusPage: React.FC<RunStatusPageProps> = ({ runId, onBack }) =
                 <div style={{ marginTop: '1rem', border: '1px solid #374151', borderRadius: '8px', overflow: 'hidden', background: '#0f172a' }}>
                   <div style={{ padding: '0.6rem 1rem', background: '#1e293b', borderBottom: '1px solid #374151', fontSize: '0.8rem', color: '#94a3b8', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span>📄 Document Viewer</span>
-                    <span style={{ fontSize: '0.75rem', color: '#38bdf8' }}>http://localhost:3001/api/runs/{runId}/preview</span>
+                    <span style={{ fontSize: '0.75rem', color: '#38bdf8' }}>{getApiBase()}/runs/{runId}/preview</span>
                   </div>
                   <iframe
-                    src={`http://localhost:3001/api/runs/${runId}/preview`}
+                    src={`${getApiBase()}/runs/${runId}/preview`}
                     style={{ width: '100%', height: '520px', border: 'none', background: '#ffffff' }}
                     title="Report Preview"
                   />
@@ -325,20 +375,52 @@ export const RunStatusPage: React.FC<RunStatusPageProps> = ({ runId, onBack }) =
 
       {/* Failure Diagnostic View */}
       {run.status === 'failed' && (
-        <div className="glass-panel" style={{ padding: '1.5rem', border: '1px solid #f43f5e' }}>
+        <div className="glass-panel" style={{ padding: '1.5rem', border: '1px solid #f43f5e', background: 'rgba(244, 63, 94, 0.04)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#f43f5e', fontWeight: 600, marginBottom: '0.75rem' }}>
             <AlertTriangle size={20} /> Execution Error & Diagnostic Capture
           </div>
-          <p style={{ fontSize: '0.875rem', color: '#94a3b8', marginBottom: '1rem' }}>
-            A step failure occurred during execution. Screenshot and Playwright trace were captured.
+          <p style={{ fontSize: '0.875rem', color: '#cbd5e1', marginBottom: '1rem', lineHeight: 1.5 }}>
+            Workflow execution halted because an action could not be completed in the browser. A failure screenshot and Playwright trace have been preserved.
           </p>
+
+          <div style={{ background: '#0f172a', border: '1px solid #374151', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem', fontSize: '0.85rem' }}>
+              <div>
+                <span style={{ color: '#94a3b8' }}>Failed Step:</span>{' '}
+                <strong style={{ color: '#fca5a5' }}>
+                  {run.detail?.failedStepIndex !== undefined ? `Step ${run.detail.failedStepIndex + 1}` : 'N/A'}
+                </strong>
+              </div>
+              <div>
+                <span style={{ color: '#94a3b8' }}>Action:</span>{' '}
+                <strong style={{ color: '#f8fafc' }}>{run.detail?.action || 'N/A'}</strong>
+              </div>
+              <div>
+                <span style={{ color: '#94a3b8' }}>Strategy:</span>{' '}
+                <strong style={{ color: '#38bdf8' }}>{run.detail?.selectorStrategy || 'N/A'}</strong>
+              </div>
+              <div>
+                <span style={{ color: '#94a3b8' }}>Target:</span>{' '}
+                <strong style={{ color: '#f8fafc' }}>{run.detail?.targetLabel || 'N/A'}</strong>
+              </div>
+            </div>
+
+            {(run.detail?.error || run.error) && (
+              <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid #1e293b' }}>
+                <span style={{ color: '#94a3b8', fontSize: '0.8rem' }}>Error Detail:</span>
+                <pre style={{ margin: '4px 0 0', padding: '8px', background: '#1e293b', borderRadius: '4px', color: '#fca5a5', fontSize: '0.78rem', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                  {run.detail?.error || run.error}
+                </pre>
+              </div>
+            )}
+          </div>
 
           <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
             <div style={{ background: '#0f172a', padding: '0.75rem 1rem', borderRadius: '6px', fontSize: '0.85rem', color: '#cbd5e1' }}>
-              📁 Screenshots: <code>worker/failures/*.png</code>
+              📁 Screenshot: <code>{run.detail?.screenshotUrl || 'worker/failures/*.png'}</code>
             </div>
             <div style={{ background: '#0f172a', padding: '0.75rem 1rem', borderRadius: '6px', fontSize: '0.85rem', color: '#cbd5e1' }}>
-              📦 Playwright Trace: <code>worker/failures/*.zip</code>
+              📦 Playwright Trace: <code>{run.detail?.traceUrl || 'worker/failures/*.zip'}</code>
             </div>
           </div>
         </div>
