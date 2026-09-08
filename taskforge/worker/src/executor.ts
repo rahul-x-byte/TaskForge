@@ -55,7 +55,7 @@ interface ResolvedTarget {
   matches: number;
 }
 
-// Multi-Strategy Selector Resolver (VideoID -> Role + Name -> TestID -> Stable CSS -> Visible Text -> Interactive Ancestor)
+// Multi-Strategy Selector Resolver (VideoID -> Role + Name -> Placeholder -> TestID -> Stable CSS -> Visible Text -> Interactive Ancestor -> Resilient Fallbacks)
 // STRICT: Never falls back to BODY. Throws ElementNotFoundError if no matching interactive element is found.
 async function resolveInteractiveTarget(
   page: Page,
@@ -74,17 +74,30 @@ async function resolveInteractiveTarget(
   async function testCandidate(locator: Locator, strategyName: string, desc: string): Promise<ResolvedTarget | null> {
     attempted.push(strategyName);
     try {
-      await locator.first().waitFor({ state: 'attached', timeout: Math.min(timeoutMs, 3000) });
+      await locator.first().waitFor({ state: 'attached', timeout: Math.min(timeoutMs, 3000) }).catch(() => {});
       const count = await locator.count();
       if (count === 0) return null;
 
-      let targetLoc = locator.first();
+      // Find first visible and operable candidate among matches (avoiding hidden file inputs or hidden overlays)
+      let targetLoc: Locator | null = null;
+      for (let idx = 0; idx < Math.min(count, 5); idx++) {
+        const candidate = locator.nth(idx);
+        const isVis = await candidate.isVisible().catch(() => false);
+        if (isVis) {
+          targetLoc = candidate;
+          break;
+        }
+      }
+
+      if (!targetLoc) {
+        targetLoc = locator.first();
+      }
 
       if (isInputAction) {
         const tagName = await targetLoc.evaluate((el: any) => el.tagName ? el.tagName.toLowerCase() : '').catch(() => '');
         const isContentEditable = await targetLoc.evaluate((el: any) => !!el.isContentEditable).catch(() => false);
         if (!['input', 'textarea', 'select'].includes(tagName) && !isContentEditable) {
-          const innerInput = targetLoc.locator('input, textarea, select, [contenteditable="true"]').first();
+          const innerInput = targetLoc.locator('input:not([type="hidden"]):not([type="file"]), textarea, select, [contenteditable="true"]').first();
           if (await innerInput.count().catch(() => 0) > 0) {
             targetLoc = innerInput;
           }
@@ -130,14 +143,26 @@ async function resolveInteractiveTarget(
     } catch {}
   }
 
-  // 3. TestID
+  // 3. Placeholder matching (resilient for search and text input fields)
+  if ((selectors.name || selectors.text) && isInputAction) {
+    const placeholderCandidate = (selectors.name || selectors.text || '').trim();
+    if (placeholderCandidate) {
+      try {
+        const loc = page.getByPlaceholder(placeholderCandidate, { exact: false });
+        const found = await testCandidate(loc, 'placeholder', `placeholder=~/${placeholderCandidate}/i`);
+        if (found) return found;
+      } catch {}
+    }
+  }
+
+  // 4. TestID
   if (selectors.testId && typeof selectors.testId === 'string' && selectors.testId !== 'true' && selectors.testId !== 'false') {
     const loc = page.getByTestId(selectors.testId);
     const found = await testCandidate(loc, 'testId', `testId=${selectors.testId}`);
     if (found) return found;
   }
 
-  // 4. Stable CSS (reject body, html, window, empty)
+  // 5. Stable CSS (reject body, html, window, empty)
   if (selectors.css && typeof selectors.css === 'string' && selectors.css !== 'true' && selectors.css !== 'false') {
     const cleanCss = selectors.css.trim();
     if (cleanCss && cleanCss !== 'body' && cleanCss !== 'html' && cleanCss !== 'window') {
@@ -147,20 +172,53 @@ async function resolveInteractiveTarget(
     }
   }
 
-  // 5. Visible Text
+  // 6. Visible Text
   if (selectors.text && typeof selectors.text === 'string' && selectors.text !== 'true' && selectors.text !== 'false' && selectors.text.length < 100) {
     const loc = page.getByText(selectors.text, { exact: false });
     const found = await testCandidate(loc, 'text', `text="${selectors.text}"`);
     if (found) return found;
   }
 
-  // 6. Semantic interactive ancestor (if css was on a child icon/img, climb to button/a)
+  // 7. Semantic interactive ancestor (if css was on a child icon/img, climb to button/a)
   if (selectors.css && selectors.css !== 'body' && selectors.css !== 'html' && selectors.css !== 'window') {
     try {
       const parentLoc = page.locator(selectors.css).locator('xpath=ancestor-or-self::*[self::a or self::button or self::input or self::select or self::textarea or @role="button" or @role="link" or @role="combobox"]').first();
       const found = await testCandidate(parentLoc, 'interactive-ancestor', `ancestor of ${selectors.css}`);
       if (found) return found;
     } catch {}
+  }
+
+  // 8. Resilient Domain / Common Web Element Fallbacks (Search & Media)
+  if (isInputAction) {
+    const inputFallbacks = [
+      'input[name="search_query"]',
+      'input#search',
+      'yt-searchbox input:not([type="file"])',
+      'input[type="search"]',
+      'input[type="text"]:not([type="hidden"]):not([type="file"])',
+      '[role="searchbox"]',
+      '[role="combobox"] input',
+    ];
+    for (const fb of inputFallbacks) {
+      const loc = page.locator(fb);
+      const found = await testCandidate(loc, `input-fallback(${fb})`, fb);
+      if (found) return found;
+    }
+  }
+
+  if (isClickAction && (selectors.videoId || (selectors.name && /video|watch|song|official/i.test(selectors.name)) || (step.pageUrl && step.pageUrl.includes('/results')))) {
+    const videoFallbacks = [
+      'ytd-video-renderer a#video-title',
+      'ytd-video-renderer a#thumbnail',
+      '#contents ytd-video-renderer a#video-title',
+      'a#video-title',
+      'ytd-rich-item-renderer a#video-title-link',
+    ];
+    for (const fb of videoFallbacks) {
+      const loc = page.locator(fb);
+      const found = await testCandidate(loc, `video-fallback(${fb})`, fb);
+      if (found) return found;
+    }
   }
 
   // Fail strictly: NEVER return body for interactive operations
@@ -337,6 +395,7 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
   let currentStrategy = '';
   let downloadedFilePath: string | null = null;
   let isRunApproved = false;
+  const failedRequests: Array<{ url: string; method: string; failure: string; isMainDocument: boolean }> = [];
 
   try {
     // 1. Fetch Workflow Version & Steps
@@ -365,9 +424,12 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
       }),
     });
 
-    // 2. Launch Browser & Tracing (NO SIMULATION MODE - Chromium launch failure MUST fail the run)
-    const isHeadless = process.env.HEADLESS !== 'false';
-    console.log(`[Executor] Launching Chromium (headless: ${isHeadless})...`);
+    // 2. Launch Browser & Tracing (Deterministic Headless, Bundled Chromium)
+    const isHeadless =
+      process.env.HEADLESS === 'true' ||
+      process.env.NODE_ENV === 'production' ||
+      !!process.env.RENDER;
+    console.log(`[Executor] Launching Playwright Chromium (headless: ${isHeadless})...`);
 
     try {
       browser = await chromium.launch({
@@ -380,6 +442,34 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
     } catch (launchErr: any) {
       throw new Error(`Playwright Chromium could not be launched: ${launchErr?.message || launchErr}`);
     }
+
+    // Network & Page Diagnostics
+    page.on('requestfailed', (request) => {
+      const failureText = request.failure()?.errorText || 'request failed';
+      const isDoc = request.isNavigationRequest() || request.resourceType() === 'document';
+      failedRequests.push({
+        url: request.url(),
+        method: request.method(),
+        failure: failureText,
+        isMainDocument: isDoc,
+      });
+      if (failedRequests.length > 50) failedRequests.shift();
+
+      console.warn('[Playwright requestfailed]', {
+        url: request.url(),
+        method: request.method(),
+        failure: failureText,
+        isMainDocument: isDoc,
+      });
+    });
+
+    page.on('console', (msg) => {
+      console.log('[Playwright console]', msg.type(), msg.text());
+    });
+
+    page.on('pageerror', (error) => {
+      console.error('[Playwright pageerror]', error);
+    });
 
     // Global Download Handler: Automatically catch and save downloaded files
     page.on('download', async (download) => {
@@ -464,11 +554,66 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
         }
         console.log(`[Executor] Navigating to: ${targetUrl}`);
         currentStrategy = 'navigation';
-        await page.goto(targetUrl, {
-          waitUntil: 'domcontentloaded',
-          timeout: 25000,
-        });
-        console.log(`[Executor] Navigation successful. Current page: ${page.url()}`);
+
+        try {
+          const response = await page.goto(targetUrl, {
+            waitUntil: 'domcontentloaded',
+            timeout: 30000,
+          });
+          console.log(`[Executor] Navigation successful. Status: ${response?.status()}, Current page: ${page.url()}`);
+        } catch (navErr: any) {
+          const currentUrl = page ? page.url() : 'unknown';
+          let execPath = '';
+          try {
+            execPath = chromium.executablePath();
+          } catch {}
+
+          const mainDocFailure = failedRequests.find(
+            (r) => r.isMainDocument && (r.url === targetUrl || r.url.startsWith(targetUrl))
+          );
+
+          let errorMsg = `Navigation failed: page.goto(${targetUrl}) failed: ${navErr?.message || navErr}`;
+          if (mainDocFailure && mainDocFailure.failure.includes('ERR_BLOCKED_BY_CLIENT')) {
+            errorMsg = `Navigation failed: Chromium rejected the main document request: ERR_BLOCKED_BY_CLIENT (${targetUrl})`;
+          }
+
+          console.error(`[Executor Navigation Failure Diagnostics]`, {
+            targetUrl,
+            message: navErr?.message,
+            name: navErr?.name,
+            stack: navErr?.stack,
+            pageUrl: currentUrl,
+            browserType: 'chromium',
+            executablePath: execPath,
+            headless: isHeadless,
+            recentFailedRequests: failedRequests.slice(-5),
+          });
+
+          const enhancedNavErr = new Error(errorMsg);
+          (enhancedNavErr as any).diagnostics = {
+            url: targetUrl,
+            pageUrl: currentUrl,
+            browserType: 'chromium',
+            executablePath: execPath,
+            headless: isHeadless,
+            failedRequests: failedRequests.slice(-5),
+          };
+          throw enhancedNavErr;
+        }
+
+        // Auto-dismiss cookie/consent dialogs if present (e.g. YouTube consent prompts)
+        try {
+          const consentLoc = page.locator(
+            'button:has-text("Accept all"), button:has-text("Reject all"), button:has-text("I agree"), ytd-consent-bump-v2-lightbox button'
+          );
+          if (await consentLoc.count().catch(() => 0) > 0) {
+            const firstConsent = consentLoc.first();
+            if (await firstConsent.isVisible().catch(() => false)) {
+              console.log('[Executor] Auto-dismissing cookie/consent overlay...');
+              await firstConsent.click({ timeout: 2000 }).catch(() => {});
+            }
+          }
+        } catch {}
 
       } else if (step.action === 'input' || step.action === 'change') {
         // Smart page sync: If step specifies a different URL origin/path and element not found on current page, navigate first
@@ -509,6 +654,14 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
             await page.keyboard.type(inputValue, { delay: 40 });
           }
 
+          // If this is a search input, submit search via Enter
+          const isSearchInput = /search/i.test(step.selectors?.name || '') || /search/i.test(step.selectors?.css || '') || /search/i.test(resolved.strategy);
+          if (isSearchInput && !isPasswordInput) {
+            console.log('[Executor] Pressing Enter on search input to submit search...');
+            await resolved.locator.press('Enter').catch(() => {});
+            await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => {});
+          }
+
           // Verify field contains input value where possible
           if (!isPasswordInput) {
             const actualVal = await resolved.locator.inputValue({ timeout: 2000 }).catch(() => null);
@@ -529,7 +682,20 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
           }
         }
 
-        const resolved = await resolveInteractiveTarget(page, step, 10000);
+        let resolved: ResolvedTarget;
+        try {
+          resolved = await resolveInteractiveTarget(page, step, 10000);
+        } catch (firstResolveErr) {
+          // If step specifies a page URL different from current, navigate and retry resolution
+          if (step.pageUrl && page.url() !== step.pageUrl && !page.url().includes(new URL(step.pageUrl).pathname)) {
+            console.log(`[Executor] Target not found on ${page.url()}. Navigating to step pageUrl: ${step.pageUrl}`);
+            await page.goto(step.pageUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+            resolved = await resolveInteractiveTarget(page, step, 8000);
+          } else {
+            throw firstResolveErr;
+          }
+        }
+
         currentStrategy = resolved.strategy;
         console.log(`[Executor] Element resolved strategy=${resolved.strategy} matches=${resolved.matches} desc="${resolved.description}"`);
 
@@ -651,6 +817,8 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
             pageUrl: page && !page.isClosed() ? page.url() : '',
             status: 'failed',
             error: safeErrorMessage,
+            diagnostics: (error as any).diagnostics || null,
+            recentFailedRequests: failedRequests.slice(-5),
             screenshotUrl,
             traceUrl,
           },
@@ -663,6 +831,12 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
     return false;
 
   } finally {
+    if (context) {
+      await context.close().catch((err) => console.error('[Executor Cleanup] Error closing context:', err));
+    }
+    if (browser) {
+      await browser.close().catch((err) => console.error('[Executor Cleanup] Error closing browser:', err));
+    }
     console.log(`[Executor] Execution lifecycle ended for run ${runId}.`);
   }
 }

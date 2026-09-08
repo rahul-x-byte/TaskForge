@@ -381,6 +381,19 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
 
     console.log(`[Executor] Starting execution for Run ${runId} (Workflow: ${workflowName}, Total Steps: ${rawSteps.length})`);
 
+    // 2. Check if Chromium/Playwright is available on this host
+    let pwModule: any = null;
+    try {
+      // @ts-ignore
+      pwModule = await import('playwright').catch(() => null);
+    } catch (e) {}
+
+    const chromium = pwModule?.default?.chromium || pwModule?.chromium;
+    if (!chromium) {
+      console.log(`[Backend Executor] In-process Playwright Chromium is not available on this host. Run ${runId} left in pending for worker service.`);
+      return false;
+    }
+
     // Broadcast running status
     await fetch(`${backendUrl}/api/runs/${runId}/status`, {
       method: 'PATCH',
@@ -391,22 +404,13 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
       }),
     });
 
-    // 2. Launch Browser & Tracing (NO SIMULATION MODE - Chromium launch failure MUST fail the run)
-    const isHeadless = process.env.HEADLESS !== 'false';
+    const isHeadless =
+      process.env.HEADLESS === 'true' ||
+      process.env.NODE_ENV === 'production' ||
+      !!process.env.RENDER;
     console.log(`[Executor] Launching Chromium (headless: ${isHeadless})...`);
 
     try {
-      let pwModule: any = null;
-      try {
-        // @ts-ignore
-        pwModule = await import('playwright').catch(() => null);
-      } catch (e) {}
-
-      const chromium = pwModule?.default?.chromium || pwModule?.chromium;
-      if (!chromium) {
-        throw new Error('Playwright Chromium could not be launched: playwright module is not installed or available on this host');
-      }
-
       browser = await chromium.launch({
         headless: isHeadless,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
@@ -696,6 +700,12 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
     return false;
 
   } finally {
+    if (context) {
+      await context.close().catch(() => {});
+    }
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
     console.log(`[Executor] Execution lifecycle ended for run ${runId}.`);
   }
 }

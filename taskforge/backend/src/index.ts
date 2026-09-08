@@ -50,6 +50,9 @@ await app.register(websocket);
 const uploadsDir = path.resolve(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
+// In-memory diagnostic store to guarantee error details are always returned to frontend
+export const runDiagnostics = new Map<string, { error?: string; detail?: any }>();
+
 await app.register(fastifyStatic, {
   root: uploadsDir,
   prefix: '/uploads/',
@@ -786,10 +789,16 @@ app.get('/api/runs/:id', { preHandler: [requireAuth] }, async (request, reply) =
   }
 
   const run = res.rows[0];
+  const inMemDiag = runDiagnostics.get(id);
+  const enrichedRun = {
+    ...run,
+    error: run.error || inMemDiag?.error || null,
+    detail: run.detail || inMemDiag?.detail || null,
+  };
   const verRes = await pool.query('SELECT * FROM workflow_versions WHERE id = $1', [run.version_id]);
   const steps = verRes.rows.length > 0 ? verRes.rows[0].steps : [];
 
-  return reply.send({ run, steps });
+  return reply.send({ run: enrichedRun, steps });
 });
 
 /**
@@ -1107,6 +1116,15 @@ app.patch('/api/runs/:id/status', { preHandler: [verifyWorkerSecret] }, async (r
   const body = request.body as any;
   const { status, detail, error } = body || {};
 
+  // Store in memory diagnostics cache
+  if (error || detail) {
+    const existing = runDiagnostics.get(id) || {};
+    runDiagnostics.set(id, {
+      error: error || existing.error,
+      detail: detail ? { ...(existing.detail || {}), ...detail } : existing.detail,
+    });
+  }
+
   try {
     const detailJson = detail ? JSON.stringify(detail) : null;
     await pool.query(
@@ -1171,7 +1189,13 @@ app.get('/ws/runs/:id', { websocket: true }, async (connection: any, req) => {
     try {
       const res = await pool.query('SELECT * FROM runs WHERE id = $1', [runId]);
       if (res.rows.length > 0) {
-        ws.send(JSON.stringify({ type: 'STATUS_UPDATE', run: res.rows[0] }));
+        const inMemDiag = runDiagnostics.get(runId);
+        const enrichedRun = {
+          ...res.rows[0],
+          error: res.rows[0].error || inMemDiag?.error || null,
+          detail: res.rows[0].detail || inMemDiag?.detail || null,
+        };
+        ws.send(JSON.stringify({ type: 'STATUS_UPDATE', run: enrichedRun }));
       }
     } catch (e) {}
   }, 1000);
