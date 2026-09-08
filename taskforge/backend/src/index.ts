@@ -58,20 +58,60 @@ await app.register(fastifyStatic, {
 // Run Database Migrations on Startup
 try {
   await runMigrations();
-} catch (mErr) {
-  console.warn('[Backend] Database migration warning (using in-memory compatibility engine):', mErr);
+  console.log('[Backend] Database migrations executed successfully.');
+} catch (mErr: any) {
+  console.error('[Backend] Database migration failed:', mErr?.message || mErr);
+  if (process.env.NODE_ENV === 'production') {
+    console.error('[Backend] FATAL: Production startup failed because database migrations could not be applied.');
+  }
 }
 
-// Global Health Checks (Root status, /health and /api/health)
-app.get('/', async () => ({
-  name: 'TaskForge Backend API',
-  status: 'online',
-  health: '/health',
-  api: '/api',
-  timestamp: new Date().toISOString(),
-}));
-app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
-app.get('/api/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
+// Global Health Checks (Root status, /health, /api/health, and /api/health/database)
+async function handleHealthCheck(_request: any, reply: any) {
+  const dbTest = await pool.testConnection();
+  const isHealthy = dbTest.connected;
+  return reply.status(200).send({
+    status: isHealthy ? 'ok' : 'degraded',
+    database: isHealthy ? 'connected' : 'disconnected',
+    mode: dbTest.mode,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+app.get('/', async (_request, reply) => {
+  const dbTest = await pool.testConnection();
+  return reply.send({
+    name: 'TaskForge Backend API',
+    status: dbTest.connected ? 'online' : 'degraded',
+    database: dbTest.connected ? 'connected' : 'disconnected',
+    health: '/health',
+    api: '/api',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/health', handleHealthCheck);
+app.get('/api/health', handleHealthCheck);
+
+// Dedicated lightweight database ping endpoint (Part 12 & Part 18)
+app.get('/api/health/database', async (_request, reply) => {
+  const dbTest = await pool.testConnection();
+  if (dbTest.connected) {
+    return reply.status(200).send({
+      status: 'ok',
+      database: 'connected',
+      timestamp: new Date().toISOString(),
+    });
+  } else {
+    return reply.status(503).send({
+      status: 'error',
+      database: 'disconnected',
+      message: 'Database connectivity test (SELECT 1) failed',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
 
 // ====================================================
 // 1. AUTHENTICATION APIS (SUPABASE AUTH INTEGRATION)
@@ -234,20 +274,69 @@ app.get('/api/workflows', { preHandler: [requireAuth] }, async (request, reply) 
 
   if (user.role === 'admin') {
     const res = await pool.query(`
-      SELECT w.*, p.name as user_name, p.email as user_email
+      SELECT 
+        w.id,
+        w.name,
+        w.user_id,
+        w.created_at,
+        w.current_version_id,
+        COALESCE(jsonb_array_length(wv.steps), 0) AS "stepCount",
+        wv.steps,
+        p.name AS user_name,
+        p.email AS user_email,
+        (
+          SELECT r.status 
+          FROM runs r 
+          WHERE r.workflow_id = w.id 
+          ORDER BY r.started_at DESC 
+          LIMIT 1
+        ) AS "lastStatus",
+        (
+          SELECT r.id 
+          FROM runs r 
+          WHERE r.workflow_id = w.id 
+          ORDER BY r.started_at DESC 
+          LIMIT 1
+        ) AS "latestRunId"
       FROM workflows w
+      LEFT JOIN workflow_versions wv ON w.current_version_id = wv.id
       LEFT JOIN profiles p ON w.user_id = p.id
       ORDER BY w.created_at DESC
     `);
     return reply.send(res.rows);
   }
 
-  const res = await pool.query(
-    'SELECT w.* FROM workflows w WHERE w.user_id = $1 ORDER BY w.created_at DESC',
-    [user.id]
-  );
+  const res = await pool.query(`
+    SELECT 
+      w.id,
+      w.name,
+      w.user_id,
+      w.created_at,
+      w.current_version_id,
+      COALESCE(jsonb_array_length(wv.steps), 0) AS "stepCount",
+      wv.steps,
+      (
+        SELECT r.status 
+        FROM runs r 
+        WHERE r.workflow_id = w.id 
+        ORDER BY r.started_at DESC 
+        LIMIT 1
+      ) AS "lastStatus",
+      (
+        SELECT r.id 
+        FROM runs r 
+        WHERE r.workflow_id = w.id 
+        ORDER BY r.started_at DESC 
+        LIMIT 1
+      ) AS "latestRunId"
+    FROM workflows w
+    LEFT JOIN workflow_versions wv ON w.current_version_id = wv.id
+    WHERE w.user_id = $1
+    ORDER BY w.created_at DESC
+  `, [user.id]);
   return reply.send(res.rows || []);
 });
+
 
 /**
  * Create New Blank Workflow (Bound strictly to request.user.id)
@@ -331,7 +420,7 @@ app.post('/api/workflows/from-template', { preHandler: [requireAuth] }, async (r
 app.post('/api/recordings', async (request, reply) => {
   const authHeader = request.headers.authorization;
   if (!authHeader) {
-    console.warn('[TaskForge Backend] /api/recordings rejected: Missing Authorization header');
+    console.warn('[Recording] Rejected: Missing Authorization header');
     return reply.status(401).send({
       error: 'Unauthorized',
       message: 'Authentication required. Please log in to TaskForge or supply an Authorization Bearer token.',
@@ -340,7 +429,7 @@ app.post('/api/recordings', async (request, reply) => {
 
   const user = await verifySupabaseToken(authHeader);
   if (!user || !user.id) {
-    console.warn('[TaskForge Backend] /api/recordings rejected: Invalid or expired token');
+    console.warn('[Recording] Rejected: Invalid or expired token');
     return reply.status(401).send({
       error: 'Unauthorized',
       message: 'Invalid or expired authentication token. Please log in to TaskForge again.',
@@ -355,52 +444,79 @@ app.post('/api/recordings', async (request, reply) => {
     });
   }
 
-  const steps: RecordedAction[] = Array.isArray(body.steps) ? body.steps : [];
+  if (!Array.isArray(body.steps)) {
+    return reply.status(400).send({
+      error: 'Bad Request',
+      message: 'Payload must contain a "steps" array.',
+    });
+  }
+
+  const steps: RecordedAction[] = body.steps;
   const rawName = typeof body.name === 'string' ? body.name.trim() : '';
   const workflowName = rawName || `Recorded Workflow - ${new Date().toLocaleTimeString()}`;
 
   const workflowId = uuidv4();
   const versionId = uuidv4();
 
-  console.log(`[TaskForge Backend] POST /api/recordings - User: ${user.id} (${user.email}), Steps: ${steps.length}`);
+  // Safe structured log (never logs passwords, tokens, or sensitive values)
+  console.log(`[Recording] user=${user.id} steps=${steps.length}`);
 
-  // Ensure user profile exists in database for foreign key referential integrity
   try {
-    await pool.query(
-      'INSERT INTO profiles (id, name, email, role) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING',
-      [user.id, user.name || 'User', user.email || '', user.role || 'user']
-    );
-  } catch (profErr) {
-    try {
-      await pool.query(
-        'INSERT INTO users (id, name, email, password_hash, role) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING',
-        [user.id, user.name || 'User', user.email || '', 'managed_by_supabase', user.role || 'user']
+    await pool.withTransaction(async (client) => {
+      // 1. Ensure user profile exists in database for FK referential integrity
+      try {
+        await client.query(
+          'INSERT INTO profiles (id, name, email, role) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING',
+          [user.id, user.name || 'User', user.email || '', user.role || 'user']
+        );
+      } catch (profErr) {
+        try {
+          await client.query(
+            'INSERT INTO users (id, name, email, password_hash, role) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING',
+            [user.id, user.name || 'User', user.email || '', 'managed_by_supabase', user.role || 'user']
+          );
+        } catch {}
+      }
+
+      // 2. Insert workflow (with current_version_id initially NULL)
+      await client.query(
+        'INSERT INTO workflows (id, name, user_id, current_version_id) VALUES ($1, $2, $3, NULL)',
+        [workflowId, workflowName, user.id]
       );
-    } catch (uErr) {}
+
+      // 3. Insert workflow_version (with workflow_id referencing the workflow)
+      await client.query(
+        'INSERT INTO workflow_versions (id, workflow_id, steps) VALUES ($1, $2, $3)',
+        [versionId, workflowId, JSON.stringify(steps)]
+      );
+
+      // 4. Update workflow with current_version_id
+      await client.query(
+        'UPDATE workflows SET current_version_id = $1 WHERE id = $2',
+        [versionId, workflowId]
+      );
+    });
+
+    console.log(`[Recording] workflow=${workflowId} version=${versionId} persisted successfully`);
+
+    return reply.status(201).send({
+      status: 'success',
+      workflowId,
+      versionId,
+      name: workflowName,
+      stepCount: steps.length,
+      user_id: user.id,
+    });
+  } catch (dbErr: any) {
+    console.error('[Recording Error] Failed to persist workflow to PostgreSQL:', dbErr?.message || dbErr);
+    return reply.status(500).send({
+      error: 'Database Error',
+      message: 'Failed to persist workflow to database. Transaction was rolled back.',
+      details: process.env.NODE_ENV === 'production' ? undefined : (dbErr?.message || String(dbErr)),
+    });
   }
-
-  // Insert workflow and version using the database pool abstraction (source of truth)
-  await pool.query(
-    'INSERT INTO workflows (id, name, user_id, current_version_id) VALUES ($1, $2, $3, $4)',
-    [workflowId, workflowName, user.id, versionId]
-  );
-
-  await pool.query(
-    'INSERT INTO workflow_versions (id, workflow_id, steps) VALUES ($1, $2, $3)',
-    [versionId, workflowId, JSON.stringify(steps)]
-  );
-
-  console.log(`[TaskForge Backend] Workflow created: ${workflowId} (version: ${versionId})`);
-
-  return reply.status(201).send({
-    status: 'success',
-    workflowId,
-    versionId,
-    name: workflowName,
-    stepCount: steps.length,
-    user_id: user.id,
-  });
 });
+
 
 /**
  * Get Workflow by ID (IDOR Guarded: User must own workflow or be Admin)

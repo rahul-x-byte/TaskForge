@@ -186,18 +186,21 @@ document.addEventListener('DOMContentLoaded', () => {
           syncMsg.textContent = 'Saving recording to backend...';
         }
         chrome.runtime.sendMessage({ type: 'STOP_RECORDING', backendUrl: currentBackendUrl }, (stopRes) => {
-          updateUI(false, stopRes?.queue?.length || 0);
+          const count = stopRes?.queue?.length || 0;
+          updateUI(false, count);
           if (syncMsg) {
             if (stopRes?.status === 'success') {
               syncMsg.style.color = '#34d399';
-              syncMsg.textContent = 'Successfully saved workflow to dashboard!';
+              syncMsg.textContent = `Saved to TaskForge successfully! (${count} action${count === 1 ? '' : 's'} persisted)`;
               loadWorkflows();
             } else {
               syncMsg.style.color = '#f87171';
-              syncMsg.textContent = stopRes?.error ? `Error: ${stopRes.error}` : 'Saved locally (backend unreachable).';
+              const detail = stopRes?.error ? `: ${stopRes.error}` : '';
+              syncMsg.textContent = `Recorded locally (${count} action${count === 1 ? '' : 's'}). Failed to save to TaskForge${detail}`;
             }
           }
         });
+
       } else {
         // Start recording
         if (syncMsg) syncMsg.style.display = 'none';

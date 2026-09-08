@@ -1,9 +1,3 @@
-databases:
-  - name: taskforge-db
-    plan: free
-    databaseName: taskforge
-    user: taskforge
-
 services:
   # Redis (Key Value store on Render)
   - type: redis
@@ -21,9 +15,11 @@ services:
     startCommand: npm start
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: taskforge-db
-          property: connectionString
+        sync: false   # Set to Supabase PostgreSQL connection URI in Render Dashboard (Environment tab)
+      - key: SUPABASE_URL
+        sync: false   # Set to Supabase project URL (e.g. https://zsibgzphnnwwmiusfdlp.supabase.co)
+      - key: SUPABASE_SECRET_KEY
+        sync: false   # Set to Supabase service_role secret key
       - key: REDIS_URL
         fromService:
           name: taskforge-redis
@@ -49,9 +45,7 @@ services:
           type: web
           property: hostport
       - key: DATABASE_URL
-        fromDatabase:
-          name: taskforge-db
-          property: connectionString
+        sync: false   # Supabase PostgreSQL connection URI
       - key: REDIS_URL
         fromService:
           name: taskforge-redis
@@ -61,3 +55,4 @@ services:
         value: "true"
       - key: NODE_ENV
         value: production
+

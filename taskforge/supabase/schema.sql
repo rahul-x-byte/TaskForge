@@ -49,6 +49,19 @@ CREATE TABLE IF NOT EXISTS public.runs (
 CREATE INDEX IF NOT EXISTS idx_runs_workflow_id ON public.runs(workflow_id);
 CREATE INDEX IF NOT EXISTS idx_runs_status ON public.runs(status);
 
+-- 4b. Create Run Steps Table
+CREATE TABLE IF NOT EXISTS public.run_steps (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    run_id UUID NOT NULL REFERENCES public.runs(id) ON DELETE CASCADE,
+    step_index INTEGER NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    error_message TEXT,
+    screenshot_url TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_steps_run_id ON public.run_steps(run_id);
+
 -- 5. Create Schedules Table
 CREATE TABLE IF NOT EXISTS public.schedules (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -104,6 +117,7 @@ ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.workflows ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.workflow_versions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.runs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.run_steps ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.schedules ENABLE ROW LEVEL SECURITY;
 
 -- 9. RLS Policies for Profiles
@@ -202,3 +216,41 @@ DROP POLICY IF EXISTS "Users can delete own schedules" ON public.schedules;
 CREATE POLICY "Users can delete own schedules"
   ON public.schedules FOR DELETE TO authenticated
   USING ((select auth.uid()) = user_id OR public.is_admin());
+
+-- 14. RLS Policies for Run Steps
+DROP POLICY IF EXISTS "Users can view own run steps" ON public.run_steps;
+CREATE POLICY "Users can view own run steps"
+  ON public.run_steps FOR SELECT TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM public.runs r
+    JOIN public.workflows w ON r.workflow_id = w.id
+    WHERE r.id = run_id AND w.user_id = (select auth.uid())
+  ) OR public.is_admin());
+
+DROP POLICY IF EXISTS "Users can insert own run steps" ON public.run_steps;
+CREATE POLICY "Users can insert own run steps"
+  ON public.run_steps FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM public.runs r
+    JOIN public.workflows w ON r.workflow_id = w.id
+    WHERE r.id = run_id AND w.user_id = (select auth.uid())
+  ) OR public.is_admin());
+
+DROP POLICY IF EXISTS "Users can update own run steps" ON public.run_steps;
+CREATE POLICY "Users can update own run steps"
+  ON public.run_steps FOR UPDATE TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM public.runs r
+    JOIN public.workflows w ON r.workflow_id = w.id
+    WHERE r.id = run_id AND w.user_id = (select auth.uid())
+  ) OR public.is_admin());
+
+DROP POLICY IF EXISTS "Users can delete own run steps" ON public.run_steps;
+CREATE POLICY "Users can delete own run steps"
+  ON public.run_steps FOR DELETE TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM public.runs r
+    JOIN public.workflows w ON r.workflow_id = w.id
+    WHERE r.id = run_id AND w.user_id = (select auth.uid())
+  ) OR public.is_admin());
+

@@ -63,6 +63,22 @@ const WorkflowsView: React.FC = () => {
 
   useEffect(() => {
     loadWorkflows();
+
+    const onFocus = () => {
+      loadWorkflows();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadWorkflows();
+      }
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [loadWorkflows]);
 
   const handleRecordNew = () => {
@@ -91,12 +107,13 @@ const WorkflowsView: React.FC = () => {
   const workflows: Workflow[] = rawWorkflows.map((wf) => ({
     id: wf.id,
     name: wf.name,
-    stepCount: wf.steps?.length || 0,
+    stepCount: (wf as any).stepCount ?? wf.steps?.length ?? (wf as any).step_count ?? 0,
     schedule: wf.schedule ? `${wf.schedule.frequency}${wf.schedule.time ? ` (${wf.schedule.time})` : ''}` : undefined,
-    lastStatus: wf.lastStatus || 'never_run',
-    latestRunId: wf.latestRunId,
+    lastStatus: wf.lastStatus || (wf as any).last_status || 'never_run',
+    latestRunId: wf.latestRunId || (wf as any).latest_run_id,
     created_at: wf.created_at,
   }));
+
 
   if (loading) {
     return <div style={{ padding: '3rem', textAlign: 'center', color: '#8B93A1' }}>Loading workflows...</div>;

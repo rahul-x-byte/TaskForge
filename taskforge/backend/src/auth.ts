@@ -66,16 +66,19 @@ export async function verifySupabaseToken(authHeader?: string): Promise<AuthUser
       };
     }
 
-    // 2. Local memory user fallback for offline development / test suite
-    const memUser = Array.from(memoryUsers.values()).find((u) => u.id === token || u.email === token);
-    if (memUser) {
-      return {
-        id: memUser.id,
-        email: memUser.email,
-        name: memUser.name,
-        role: memUser.role,
-      };
+    // 2. Local memory user fallback ONLY for offline development / test suite
+    if (process.env.NODE_ENV !== 'production') {
+      const memUser = Array.from(memoryUsers.values()).find((u) => u.id === token || u.email === token);
+      if (memUser) {
+        return {
+          id: memUser.id,
+          email: memUser.email,
+          name: memUser.name,
+          role: memUser.role,
+        };
+      }
     }
+
   } catch (err) {
     console.error('[Auth Error] Token verification failed:', err);
   }

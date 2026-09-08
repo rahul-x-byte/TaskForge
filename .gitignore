@@ -19,7 +19,11 @@ failures/
 .env
 .env.local
 
+# Scratch & Context Documents
+*full_script*.md
+
 # OS Files
+
 .DS_Store
 Thumbs.db
 

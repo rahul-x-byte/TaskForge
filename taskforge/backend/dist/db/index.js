@@ -1,97 +1,150 @@
 // Database Manager with Postgres & Memory Fallback Engine
 import pg from 'pg';
 import bcrypt from 'bcryptjs';
+export const isProduction = process.env.NODE_ENV === 'production';
+const hasDatabaseUrl = Boolean(process.env.DATABASE_URL && process.env.DATABASE_URL.trim().length > 0);
 export const memoryUsers = new Map();
 export const memoryWorkflows = new Map();
 export const memoryVersions = new Map();
 export const memoryRuns = new Map();
 export const memoryRunSteps = new Map();
-// Seed default users in memory at startup
-// Seed default users & profiles in memory at startup
-const adminPasswordHash = bcrypt.hashSync('admin123', 10);
-const userPasswordHash = bcrypt.hashSync('user123', 10);
 const defaultAdminId = 'u-admin-seed-001';
 const defaultUserId = 'u-user-seed-002';
-const defaultAdminUser = {
-    id: defaultAdminId,
-    name: 'TaskForge Admin',
-    email: 'admin@example.com',
-    password_hash: adminPasswordHash,
-    role: 'admin',
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-};
-const defaultNormalUser = {
-    id: defaultUserId,
-    name: 'Default User',
-    email: 'user@example.com',
-    password_hash: userPasswordHash,
-    role: 'user',
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-};
-memoryUsers.set(defaultAdminId, defaultAdminUser);
-memoryUsers.set('admin@example.com', defaultAdminUser);
-memoryUsers.set(defaultUserId, defaultNormalUser);
-memoryUsers.set('user@example.com', defaultNormalUser);
-// Pre-populate initial sample workflow at backend startup
-const initialWfId = 'sample-automated-download-workflow';
-const initialVerId = 'sample-automated-download-version';
-const initialSteps = [
-    {
-        action: 'navigate',
-        timestamp: Date.now(),
-        selectors: { css: 'window' },
-        value: 'http://localhost:3001/login',
-        pageUrl: 'http://localhost:3001/login',
-    },
-    {
-        action: 'input',
-        timestamp: Date.now() + 1000,
-        selectors: { css: 'input[name="username"]' },
-        value: 'admin',
-        pageUrl: 'http://localhost:3001/login',
-    },
-    {
-        action: 'click',
-        timestamp: Date.now() + 2000,
-        selectors: { css: 'button[type="submit"]' },
-        pageUrl: 'http://localhost:3001/login',
-        isSensitive: true,
-    },
-];
-memoryWorkflows.set(initialWfId, {
-    id: initialWfId,
-    name: 'Automated Sample Report Download',
-    user_id: defaultUserId,
-    created_at: new Date().toISOString(),
-    current_version_id: initialVerId,
-});
-memoryVersions.set(initialVerId, {
-    id: initialVerId,
-    workflow_id: initialWfId,
-    steps: initialSteps,
-    created_at: new Date().toISOString(),
-});
-// Postgres Pool Connection (if DATABASE_URL is configured)
-let pgPool = null;
-if (process.env.DATABASE_URL) {
-    pgPool = new pg.Pool({
-        connectionString: process.env.DATABASE_URL,
-        ssl: process.env.DATABASE_URL.includes('localhost') || process.env.DATABASE_URL.includes('127.0.0.1') ? false : { rejectUnauthorized: false },
-        max: 5,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 5000,
+// Only seed memory users in development/offline test mode
+if (!isProduction && !hasDatabaseUrl) {
+    const adminPasswordHash = bcrypt.hashSync('admin123', 10);
+    const userPasswordHash = bcrypt.hashSync('user123', 10);
+    const defaultAdminUser = {
+        id: defaultAdminId,
+        name: 'TaskForge Admin',
+        email: 'admin@example.com',
+        password_hash: adminPasswordHash,
+        role: 'admin',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+    };
+    const defaultNormalUser = {
+        id: defaultUserId,
+        name: 'Default User',
+        email: 'user@example.com',
+        password_hash: userPasswordHash,
+        role: 'user',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+    };
+    memoryUsers.set(defaultAdminId, defaultAdminUser);
+    memoryUsers.set('admin@example.com', defaultAdminUser);
+    memoryUsers.set(defaultUserId, defaultNormalUser);
+    memoryUsers.set('user@example.com', defaultNormalUser);
+    // Pre-populate initial sample workflow ONLY in development offline mode
+    const initialWfId = 'sample-automated-download-workflow';
+    const initialVerId = 'sample-automated-download-version';
+    const initialSteps = [
+        {
+            action: 'navigate',
+            timestamp: Date.now(),
+            selectors: { css: 'window' },
+            value: 'http://localhost:3001/login',
+            pageUrl: 'http://localhost:3001/login',
+        },
+        {
+            action: 'input',
+            timestamp: Date.now() + 1000,
+            selectors: { css: 'input[name="username"]' },
+            value: 'admin',
+            pageUrl: 'http://localhost:3001/login',
+        },
+        {
+            action: 'click',
+            timestamp: Date.now() + 2000,
+            selectors: { css: 'button[type="submit"]' },
+            pageUrl: 'http://localhost:3001/login',
+            isSensitive: true,
+        },
+    ];
+    memoryWorkflows.set(initialWfId, {
+        id: initialWfId,
+        name: 'Automated Sample Report Download',
+        user_id: defaultUserId,
+        created_at: new Date().toISOString(),
+        current_version_id: initialVerId,
+    });
+    memoryVersions.set(initialVerId, {
+        id: initialVerId,
+        workflow_id: initialWfId,
+        steps: initialSteps,
+        created_at: new Date().toISOString(),
     });
 }
+// PostgreSQL Pool Connection (Single source of truth in production)
+let pgPool = null;
+if (hasDatabaseUrl) {
+    const connStr = process.env.DATABASE_URL.trim();
+    const isLocal = connStr.includes('localhost') || connStr.includes('127.0.0.1');
+    pgPool = new pg.Pool({
+        connectionString: connStr,
+        ssl: isLocal ? false : { rejectUnauthorized: false },
+        max: 10,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 10000,
+    });
+    pgPool.on('error', (err) => {
+        console.error('[PostgreSQL Pool Unexpected Error]', err);
+    });
+    console.log('[Database] PostgreSQL/Supabase mode configured');
+}
+else {
+    if (isProduction) {
+        console.error('[FATAL CONFIGURATION ERROR] DATABASE_URL is missing in production mode (NODE_ENV=production). In-memory engine fallback is strictly disabled in production.');
+    }
+    else {
+        console.log('[Database] Development memory mode (PostgreSQL unconfigured)');
+    }
+}
+export function isDatabaseConfigured() {
+    return Boolean(pgPool);
+}
+export async function testDatabaseConnection() {
+    if (!pgPool) {
+        return {
+            connected: false,
+            error: isProduction ? 'DATABASE_URL is missing in production' : 'PostgreSQL not configured (running in development memory mode)',
+            mode: isProduction ? 'production-unconfigured' : 'memory-mode',
+        };
+    }
+    try {
+        const client = await pgPool.connect();
+        try {
+            await client.query('SELECT 1');
+            return { connected: true, mode: 'postgresql' };
+        }
+        finally {
+            client.release();
+        }
+    }
+    catch (err) {
+        console.error('[PostgreSQL Health Check Failed]', err?.message || err);
+        return {
+            connected: false,
+            error: err?.message || String(err),
+            mode: 'postgresql-error',
+        };
+    }
+}
 export async function query(text, params = []) {
+    if (isProduction && !pgPool) {
+        throw new Error('[Database Unavailable] DATABASE_URL is required in production mode. In-memory engine fallback is strictly disabled.');
+    }
     if (pgPool) {
+        // In production or when PostgreSQL is configured, throw query errors directly.
+        // NEVER silently fall back to the in-memory engine!
         try {
             const res = await pgPool.query(text, params);
             return res;
         }
         catch (pgErr) {
-            console.warn('[Postgres Query Fallback to Memory Engine]', pgErr);
+            console.error('[PostgreSQL Query Error]', pgErr);
+            throw pgErr;
         }
     }
     const normalizedSql = text.trim().toLowerCase();
@@ -382,7 +435,48 @@ export async function query(text, params = []) {
     }
     return { rows: [] };
 }
+export async function getClient() {
+    if (!pgPool) {
+        throw new Error('[Database Unavailable] PostgreSQL pool is not configured.');
+    }
+    return await pgPool.connect();
+}
+export async function withTransaction(callback) {
+    if (isProduction && !pgPool) {
+        throw new Error('[Database Unavailable] DATABASE_URL is required in production mode. Cannot execute transaction.');
+    }
+    if (pgPool) {
+        const client = await pgPool.connect();
+        try {
+            await client.query('BEGIN');
+            const result = await callback(client);
+            await client.query('COMMIT');
+            return result;
+        }
+        catch (err) {
+            try {
+                await client.query('ROLLBACK');
+            }
+            catch (rbErr) {
+                console.warn('[Transaction Rollback Warning]', rbErr);
+            }
+            throw err;
+        }
+        finally {
+            client.release();
+        }
+    }
+    // Development Memory Fallback
+    return await callback({ query });
+}
 export const pool = {
     query,
-    end: async () => { },
+    getClient,
+    withTransaction,
+    isConfigured: isDatabaseConfigured,
+    testConnection: testDatabaseConnection,
+    end: async () => {
+        if (pgPool)
+            await pgPool.end();
+    },
 };
