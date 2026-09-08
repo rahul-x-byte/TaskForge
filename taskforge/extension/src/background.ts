@@ -1,4 +1,5 @@
 // Background Service Worker for TaskForge Chrome Extension
+import { getFreshAuthToken } from './auth.js';
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log('[TaskForge Background] Extension installed.');
@@ -46,8 +47,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       await chrome.storage.local.set({ isRecording: false });
 
-      // POST recording sequence to Backend API
-      const storage = await chrome.storage.local.get(['backendUrl', 'authToken']);
+      // Always obtain fresh auth token from open dashboard tab before POST /api/recordings
+      let token = await getFreshAuthToken();
+
+      const storage = await chrome.storage.local.get(['backendUrl']);
       const rawBackend = message.backendUrl || storage.backendUrl || DEFAULT_BACKEND_URL;
       const backendUrl = normalizeRecordingsUrl(rawBackend);
       console.log(`[TaskForge] POST ${backendUrl}`);
@@ -55,23 +58,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
       };
-      if (storage.authToken) {
-        headers['Authorization'] = `Bearer ${storage.authToken}`;
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
       } else {
-        console.warn('[TaskForge] No auth token found in extension storage. Ensure you are logged into the TaskForge dashboard.');
+        console.warn('[TaskForge Auth] No auth token found in dashboard or storage.');
       }
 
+      const postPayload = JSON.stringify({
+        name: `Recorded Workflow - ${new Date().toLocaleTimeString()}`,
+        steps: queue,
+      });
+
       try {
-        const response = await fetch(backendUrl, {
+        let response = await fetch(backendUrl, {
           method: 'POST',
           headers,
-          body: JSON.stringify({
-            name: `Recorded Workflow - ${new Date().toLocaleTimeString()}`,
-            steps: queue,
-          }),
+          body: postPayload,
         });
 
         console.log(`[TaskForge] Response status: ${response.status}`);
+
+        // If HTTP 401, immediately attempt one token refresh from dashboard and retry exactly once
+        if (response.status === 401) {
+          console.log('[TaskForge Auth] Token rejected, refreshing and retrying');
+          token = await getFreshAuthToken({ forceTabSearch: true });
+          if (token) {
+            const retryHeaders: Record<string, string> = {
+              ...headers,
+              'Authorization': `Bearer ${token}`,
+            };
+            response = await fetch(backendUrl, {
+              method: 'POST',
+              headers: retryHeaders,
+              body: postPayload,
+            });
+            console.log(`[TaskForge] Retry response status: ${response.status}`);
+          }
+        }
 
         if (response.ok) {
           const resData = await response.json();
@@ -81,9 +104,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           console.warn(`[TaskForge] Recording save failed with status: ${response.status}`);
           let errMsg = `HTTP ${response.status} from backend`;
           if (response.status === 401) {
-            errMsg = 'Authentication required (401). Please open or refresh your TaskForge dashboard tab to sync your login, or copy your token.';
+            console.log('[TaskForge Auth] Authentication failed after retry');
+            errMsg = 'Authentication failed (401). Please open or refresh your TaskForge dashboard tab to sync your login, or copy your token.';
           } else if (response.status === 404) {
             errMsg = `Backend endpoint not found (404) at ${backendUrl}. Check backend status.`;
+          } else {
+            try {
+              const errBody = await response.json();
+              if (errBody?.message) errMsg = errBody.message;
+            } catch {}
           }
           sendResponse({ status: 'error', statusCode: response.status, error: errMsg, queue });
         }
@@ -94,6 +123,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true;
   }
+
 
   if (message.type === 'EXECUTE_IN_BROWSER') {
     const steps = message.steps || [];

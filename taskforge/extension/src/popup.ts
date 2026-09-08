@@ -1,3 +1,5 @@
+import { getFreshAuthToken } from './auth.js';
+
 document.addEventListener('DOMContentLoaded', () => {
   const toggleBtn = document.getElementById('toggle-btn') as HTMLButtonElement;
   const statusBadge = document.getElementById('status-badge') as HTMLDivElement;
@@ -10,7 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const DEFAULT_BACKEND_URL = 'https://taskforge-bd.onrender.com/api/recordings';
 
   // Load saved backend URL & authToken or set default
-  chrome.storage.local.get(['backendUrl', 'authToken'], (result) => {
+  chrome.storage.local.get(['backendUrl', 'authToken'], async (result) => {
     let url = (result.backendUrl || DEFAULT_BACKEND_URL).trim();
     if (url.includes('ta41') || url.includes('ta4i')) {
       url = url.replace(/taskforge-backend-(ta41|ta4i)\.onrender\.com/g, 'taskforge-bd.onrender.com');
@@ -19,37 +21,24 @@ document.addEventListener('DOMContentLoaded', () => {
     if (backendUrlInput) {
       backendUrlInput.value = url;
     }
-    if (authTokenInput) {
-      authTokenInput.value = result.authToken || '';
+    if (authTokenInput && result.authToken) {
+      authTokenInput.value = result.authToken;
     }
 
-    // Multi-tab Auto-sync: Find any open TaskForge dashboard tab and extract token
-    const syncTokenFromTabs = () => {
-      chrome.tabs.query({}, (tabs) => {
-        const dashboardTabs = tabs.filter(
-          (t) => t.id && t.url && (t.url.includes('vercel.app') || t.url.includes('localhost') || t.url.includes('127.0.0.1') || t.url.includes('taskforge'))
-        );
+    // Always prefer fresh token from open dashboard tabs
+    const freshToken = await getFreshAuthToken();
+    if (freshToken && authTokenInput) {
+      authTokenInput.value = freshToken;
+    }
 
-        for (const tab of dashboardTabs) {
-          if (!tab.id) continue;
-          chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: () => localStorage.getItem('taskforge_auth_token'),
-          }, (results) => {
-            const activeToken = results?.[0]?.result;
-            if (activeToken && typeof activeToken === 'string' && activeToken.trim()) {
-              chrome.storage.local.set({ authToken: activeToken.trim() });
-              if (authTokenInput) {
-                authTokenInput.value = activeToken.trim();
-              }
-              loadWorkflows();
-            }
-          });
-        }
-      });
-    };
+    loadWorkflows();
+  });
 
-    syncTokenFromTabs();
+  // Keep authTokenInput in sync with storage updates
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName === 'local' && changes.authToken && authTokenInput) {
+      authTokenInput.value = changes.authToken.newValue || '';
+    }
   });
 
   if (backendUrlInput) {
@@ -99,7 +88,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function loadWorkflows() {
     if (!workflowsList) return;
     try {
-      const storage = await chrome.storage.local.get(['backendUrl', 'authToken']);
+      const storage = await chrome.storage.local.get(['backendUrl']);
       let base = (storage.backendUrl || DEFAULT_BACKEND_URL).trim().replace(/\/+$/, '');
       if (base.includes('ta41') || base.includes('ta4i')) {
         base = base.replace(/taskforge-backend-(ta41|ta4i)\.onrender\.com/g, 'taskforge-bd.onrender.com');
@@ -107,12 +96,30 @@ document.addEventListener('DOMContentLoaded', () => {
       if (base.endsWith('/recordings')) base = base.replace(/\/recordings$/, '');
       if (!base.endsWith('/api')) base = `${base}/api`;
 
-      const headers: Record<string, string> = {};
-      if (storage.authToken) {
-        headers['Authorization'] = `Bearer ${storage.authToken}`;
+      // 1. Always call getFreshAuthToken() before GET /api/workflows
+      let token = await getFreshAuthToken();
+      if (token && authTokenInput) {
+        authTokenInput.value = token;
       }
 
-      const res = await fetch(`${base}/workflows`, { headers }).catch(() => null);
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      let res = await fetch(`${base}/workflows`, { headers }).catch(() => null);
+
+      // 2. If HTTP 401, retry once with fresh token
+      if (res && res.status === 401) {
+        console.log('[TaskForge Auth] Token rejected, refreshing and retrying');
+        token = await getFreshAuthToken({ forceTabSearch: true });
+        if (token) {
+          if (authTokenInput) authTokenInput.value = token;
+          headers['Authorization'] = `Bearer ${token}`;
+          res = await fetch(`${base}/workflows`, { headers }).catch(() => null);
+        }
+      }
+
       if (res && res.ok) {
         const data: any = await res.json();
         const list = Array.isArray(data) ? data : [];
@@ -157,7 +164,8 @@ document.addEventListener('DOMContentLoaded', () => {
           workflowsList.appendChild(item);
         });
       } else if (res && res.status === 401) {
-        workflowsList.innerHTML = '<div style="font-size:0.72rem; color:#fbbf24;">Auth token required (paste below)</div>';
+        console.log('[TaskForge Auth] Authentication failed after retry');
+        workflowsList.innerHTML = '<div style="font-size:0.72rem; color:#f87171;">Authentication failed (401). Please log in to TaskForge dashboard.</div>';
       } else {
         workflowsList.innerHTML = '<div style="font-size:0.72rem; color:#f87171;">Backend unreachable</div>';
       }
@@ -165,6 +173,7 @@ document.addEventListener('DOMContentLoaded', () => {
       workflowsList.innerHTML = '<div style="font-size:0.72rem; color:#94a3b8;">No workflows loaded</div>';
     }
   }
+
 
   loadWorkflows();
 
