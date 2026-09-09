@@ -14,7 +14,7 @@ const FAILURES_DIR = path.resolve(process.cwd(), 'failures');
 if (!fs.existsSync(DOWNLOADS_DIR)) fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
 if (!fs.existsSync(FAILURES_DIR)) fs.mkdirSync(FAILURES_DIR, { recursive: true });
 
-const WORKER_SECRET = process.env.WORKER_SECRET || 'taskforge-worker-secret-key-2026';
+const WORKER_SECRET = process.env.WORKER_SECRET || '';
 
 export class ElementNotFoundError extends Error {
   constructor(message: string) {

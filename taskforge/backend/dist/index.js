@@ -11,6 +11,8 @@ import { runMigrations } from './db/migrate.js';
 import { executeWorkflowRun } from './executor.js';
 import { requireAuth, requireAdmin, verifyWorkerSecret, verifySupabaseToken } from './auth.js';
 import { supabaseAdmin } from './lib/supabaseAdmin.js';
+import { runDiagnostics, updateRunStatus } from './runStatus.js';
+import { startWorker, stopWorker } from './worker.js';
 const app = Fastify({ logger: true });
 await app.register(cors, {
     origin: (origin, cb) => {
@@ -42,8 +44,6 @@ await app.register(websocket);
 const uploadsDir = path.resolve(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadsDir))
     fs.mkdirSync(uploadsDir, { recursive: true });
-// In-memory diagnostic store to guarantee error details are always returned to frontend
-export const runDiagnostics = new Map();
 await app.register(fastifyStatic, {
     root: uploadsDir,
     prefix: '/uploads/',
@@ -914,31 +914,7 @@ app.patch('/api/runs/:id/status', { preHandler: [verifyWorkerSecret] }, async (r
     const { id } = request.params;
     const body = request.body;
     const { status, detail, error } = body || {};
-    // Store in memory diagnostics cache
-    if (error || detail) {
-        const existing = runDiagnostics.get(id) || {};
-        runDiagnostics.set(id, {
-            error: error || existing.error,
-            detail: detail ? { ...(existing.detail || {}), ...detail } : existing.detail,
-        });
-    }
-    try {
-        const detailJson = detail ? JSON.stringify(detail) : null;
-        await pool.query(`UPDATE runs 
-       SET status = $1, 
-           error = COALESCE($2, error), 
-           detail = COALESCE($3::jsonb, detail),
-           finished_at = CASE WHEN $1 IN ('completed', 'failed', 'cancelled', 'timed_out') THEN NOW() ELSE finished_at END 
-       WHERE id = $4`, [status, error || null, detailJson, id]);
-        if (detail && typeof detail.stepIndex === 'number') {
-            await pool.query(`INSERT INTO run_steps (run_id, step_index, status, error_message, screenshot_url)
-         VALUES ($1, $2, $3, $4, $5)`, [id, detail.stepIndex, detail.status || status, error || detail.error || null, detail.screenshotUrl || null]).catch(() => { });
-        }
-    }
-    catch (err) {
-        console.warn(`[Run Status Update Warning] Failed to update full detail:`, err?.message || err);
-        await pool.query(`UPDATE runs SET status = $1, finished_at = CASE WHEN $1 IN ('completed', 'failed', 'cancelled', 'timed_out') THEN NOW() ELSE finished_at END WHERE id = $2`, [status, id]).catch(() => { });
-    }
+    await updateRunStatus(id, status, detail, error);
     return reply.send({ status: 'updated', runId: id });
 });
 app.post('/api/runs/:id/credentials', { preHandler: [verifyWorkerSecret] }, async (request, reply) => {
@@ -985,16 +961,35 @@ app.get('/ws/runs/:id', { websocket: true }, async (connection, req) => {
         console.log(`[WebSocket] Disconnected for run ${runId}`);
     });
 });
-// Start Fastify Server
+// Start Fastify Server & Automation Worker
 const port = Number(process.env.PORT) || 3001;
 const host = process.env.HOST || '0.0.0.0';
+console.log('[Backend] Starting API server...');
 app.listen({ port, host }, (err, address) => {
     if (err) {
         console.error('[Fatal Backend Error]', err);
         process.exit(1);
     }
+    console.log(`[Backend] API server started on port ${port} (${address})`);
     console.log(`====================================================`);
     console.log(` TaskForge Fastify Backend Server running at: ${address}`);
     console.log(` Supabase Auth & RLS Security Engine Active.`);
     console.log(`====================================================`);
+    // Start internal TaskForge automation worker polling loop asynchronously
+    startWorker().catch((workerErr) => {
+        console.error('[Worker Error]', workerErr);
+    });
 });
+// Graceful Shutdown
+const handleShutdown = async (signal) => {
+    console.log(`[TaskForge] Received ${signal}. Shutting down gracefully...`);
+    stopWorker();
+    try {
+        await app.close();
+        console.log('[TaskForge] Fastify HTTP server closed.');
+    }
+    catch (e) { }
+    process.exit(0);
+};
+process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+process.on('SIGINT', () => handleShutdown('SIGINT'));

@@ -1,6 +1,8 @@
 import { pool, memoryUsers, memoryWorkflows, memoryRuns } from '../db/index.js';
-import { verifySupabaseToken, WORKER_SECRET } from '../auth.js';
 import { v4 as uuidv4 } from 'uuid';
+
+process.env.WORKER_SECRET = process.env.WORKER_SECRET || 'test-worker-secret-for-rbac';
+const { verifySupabaseToken, WORKER_SECRET } = await import('../auth.js');
 
 async function runRbacTestSuite() {
   console.log('====================================================');

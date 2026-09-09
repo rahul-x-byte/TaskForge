@@ -2,7 +2,13 @@ import { FastifyRequest, FastifyReply } from 'fastify';
 import { supabaseAdmin } from './lib/supabaseAdmin.js';
 import { pool, memoryUsers } from './db/index.js';
 
-export const WORKER_SECRET = process.env.WORKER_SECRET || 'taskforge-worker-secret-key-2026';
+export const WORKER_SECRET: string | null = process.env.WORKER_SECRET || null;
+
+if (WORKER_SECRET) {
+  console.log('[Backend] WORKER_SECRET configured: true');
+} else {
+  console.log('[Backend] WORKER_SECRET configured: false');
+}
 
 export interface AuthUser {
   id: string;
@@ -129,7 +135,7 @@ export async function requireAdmin(request: FastifyRequest, reply: FastifyReply)
  */
 export async function verifyWorkerSecret(request: FastifyRequest, reply: FastifyReply) {
   const headerSecret = request.headers['x-worker-secret'];
-  if (headerSecret !== WORKER_SECRET) {
+  if (!headerSecret || headerSecret !== WORKER_SECRET) {
     return reply.status(401).send({ error: 'Unauthorized worker secret', message: 'Invalid or missing X-Worker-Secret header.' });
   }
 }

@@ -195,8 +195,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Extension Background Pending Run Poller & Auto-Executor
 async function checkAndExecutePendingRuns() {
   try {
-    const storage = await chrome.storage.local.get(['backendUrl', 'isRecording']);
-    if (storage.isRecording) return;
+    const storage = await chrome.storage.local.get(['backendUrl', 'isRecording', 'desktopExecutionEnabled']);
+    if (storage.isRecording || !storage.desktopExecutionEnabled) return;
 
     let base = normalizeRecordingsUrl(storage.backendUrl || DEFAULT_BACKEND_URL);
     base = base.replace(/\/recordings$/, '');

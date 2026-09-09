@@ -9,7 +9,7 @@
     "start:worker": "tsx src/worker.ts",
     "run:runner": "tsx src/runner.ts",
     "test:youtube": "tsc && node dist/youtube.test.js",
-    "build": "tsc"
+    "build": "tsc -p ../shared/tsconfig.json && tsc"
   },
   "dependencies": {
     "@taskforge/shared": "file:../shared",

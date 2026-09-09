@@ -30,6 +30,8 @@ export interface SelectorBundle {
     css?: string;
     videoId?: string;
     inputType?: string;
+    placeholder?: string;
+    interactiveAncestor?: string;
 }
 export interface RecordedAction {
     action: string;

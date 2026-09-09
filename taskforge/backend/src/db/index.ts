@@ -387,6 +387,21 @@ export async function query(text: string, params: any[] = []): Promise<{ rows: a
     return { rows: mappedList };
   }
 
+  // --- WORKFLOW_VERSIONS TABLE QUERIES ---
+  if (normalizedSql.includes('from workflow_versions')) {
+    if (normalizedSql.includes('where id =')) {
+      const verId = params[0];
+      const ver = memoryVersions.get(verId);
+      return { rows: ver ? [ver] : [] };
+    }
+    if (normalizedSql.includes('where workflow_id =')) {
+      const wfId = params[0];
+      const vers = Array.from(memoryVersions.values()).filter((v) => v.workflow_id === wfId);
+      return { rows: vers };
+    }
+    return { rows: Array.from(memoryVersions.values()) };
+  }
+
   // --- RUNS TABLE QUERIES ---
 
   // 14. INSERT INTO runs
@@ -416,10 +431,15 @@ export async function query(text: string, params: any[] = []): Promise<{ rows: a
       return { rows: [] };
     }
 
-    const [statusVal, runIdVal] = params;
+    const runIdVal = params[params.length - 1];
+    const statusVal = params[0];
+    const errorVal = params.length > 2 ? params[1] : null;
     const run = memoryRuns.get(runIdVal);
     if (run) {
       run.status = statusVal;
+      if (errorVal !== undefined) {
+        run.error = errorVal;
+      }
       if (statusVal === 'completed' || statusVal === 'failed' || statusVal === 'cancelled' || statusVal === 'timed_out') {
         run.finished_at = new Date().toISOString();
       }
