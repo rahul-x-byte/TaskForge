@@ -9,7 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { RecordedAction, WorkflowStep } from '@taskforge/shared';
 import { pool, memoryUsers, memoryWorkflows, memoryVersions, memoryRuns } from './db/index.js';
 import { runMigrations } from './db/migrate.js';
-import { executeWorkflowRun } from './executor.js';
+import { executeWorkflowRun, logPlaywrightDiagnostics } from './executor.js';
 import { requireAuth, requireAdmin, verifyWorkerSecret, verifySupabaseToken } from './auth.js';
 import { supabaseAdmin } from './lib/supabaseAdmin.js';
 import { runDiagnostics, updateRunStatus } from './runStatus.js';
@@ -1188,6 +1188,9 @@ app.listen({ port, host }, (err, address) => {
   console.log(` TaskForge Fastify Backend Server running at: ${address}`);
   console.log(` Supabase Auth & RLS Security Engine Active.`);
   console.log(`====================================================`);
+
+  console.log(`[Backend] Checking Playwright environment diagnostics...`);
+  logPlaywrightDiagnostics();
 
   // Start internal TaskForge automation worker polling loop asynchronously
   startWorker().catch((workerErr) => {

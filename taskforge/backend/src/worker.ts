@@ -1,5 +1,5 @@
-﻿import { pool } from './db/index.js';
-import { executeWorkflowRun } from './executor.js';
+import { pool } from './db/index.js';
+import { executeWorkflowRun, logPlaywrightDiagnostics } from './executor.js';
 import { runDiagnostics } from './runStatus.js';
 
 let isWorkerRunning = false;
@@ -59,6 +59,7 @@ export async function startWorker(): Promise<void> {
   stopRequested = false;
 
   console.log('[Worker] Embedded automation worker started');
+  logPlaywrightDiagnostics();
   console.log('[Worker] Polling for pending runs');
 
   // Launch asynchronous non-blocking polling loop

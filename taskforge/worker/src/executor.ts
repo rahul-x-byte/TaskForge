@@ -2,10 +2,66 @@ import playwright, { type Browser, type BrowserContext, type Page, type Locator 
 import * as path from 'path';
 import * as fs from 'fs';
 import { readFile } from 'fs/promises';
+import { createRequire } from 'module';
 import { SelectorBundle, RecordedAction } from '@taskforge/shared';
 import { resolveBackendUrl } from './config.js';
 
 const { chromium } = playwright;
+const esmRequire = createRequire(import.meta.url);
+
+export function getPlaywrightDiagnostics(): {
+  version: string;
+  executablePath: string;
+  browsersPath: string;
+  executableExists: boolean;
+} {
+  let version = 'unknown';
+  try {
+    const pkg = esmRequire('playwright/package.json');
+    version = pkg?.version || '1.63.0';
+  } catch {
+    try {
+      const corePkg = esmRequire('playwright-core/package.json');
+      version = corePkg?.version || '1.63.0';
+    } catch {
+      version = '1.63.0';
+    }
+  }
+
+  const browsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH || '(default: ~/.cache/ms-playwright)';
+  let execPath = 'unknown';
+  let executableExists = false;
+
+  try {
+    execPath = chromium.executablePath();
+    executableExists = Boolean(execPath && fs.existsSync(execPath));
+  } catch (err: any) {
+    execPath = `Error resolving path: ${err?.message || err}`;
+  }
+
+  return {
+    version,
+    executablePath: execPath,
+    browsersPath,
+    executableExists,
+  };
+}
+
+export function logPlaywrightDiagnostics(): {
+  version: string;
+  executablePath: string;
+  browsersPath: string;
+  executableExists: boolean;
+} {
+  const diag = getPlaywrightDiagnostics();
+  console.log('[Playwright Startup Diagnostics]', {
+    playwrightVersion: diag.version,
+    executablePath: diag.executablePath,
+    playwrightBrowsersPath: diag.browsersPath,
+    executableExists: diag.executableExists,
+  });
+  return diag;
+}
 
 const BACKEND_URL = resolveBackendUrl();
 const DOWNLOADS_DIR = path.resolve(process.cwd(), 'downloads');
@@ -429,7 +485,13 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
       process.env.HEADLESS === 'true' ||
       process.env.NODE_ENV === 'production' ||
       !!process.env.RENDER;
-    console.log(`[Executor] Launching Playwright Chromium (headless: ${isHeadless})...`);
+    const launchDiag = getPlaywrightDiagnostics();
+    console.log(`[Executor] Launching Playwright Chromium (headless: ${isHeadless})...`, {
+      playwrightVersion: launchDiag.version,
+      executablePath: launchDiag.executablePath,
+      playwrightBrowsersPath: launchDiag.browsersPath,
+      executableExists: launchDiag.executableExists,
+    });
 
     try {
       browser = await chromium.launch({
@@ -440,6 +502,10 @@ export async function executeWorkflowRun(workflowId: string, versionId: string, 
       await context.tracing.start({ screenshots: true, snapshots: true });
       page = await context.newPage();
     } catch (launchErr: any) {
+      console.error('[Executor] Playwright Chromium launch failed:', {
+        error: launchErr?.message || launchErr,
+        diagnostics: launchDiag,
+      });
       throw new Error(`Playwright Chromium could not be launched: ${launchErr?.message || launchErr}`);
     }
 

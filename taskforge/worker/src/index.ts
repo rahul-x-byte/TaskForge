@@ -1,7 +1,10 @@
 import http from 'http';
 import { pollForJobs } from './worker.js';
+import { logPlaywrightDiagnostics } from './executor.js';
 
 console.log('[Worker] TaskForge Worker service initialized.');
+console.log('[Worker] Checking Playwright environment diagnostics...');
+logPlaywrightDiagnostics();
 console.log('[Worker] Ready to process automation tasks with Playwright.');
 
 // Optional lightweight HTTP server for Web service health checks (if PORT is set by Render)

@@ -11,7 +11,7 @@ services:
     runtime: node
     plan: free
     rootDir: taskforge/backend
-    buildCommand: npm install && npm run build && npx playwright install chromium
+    buildCommand: npm install && npm run build && npx playwright install chromium && npx playwright install --list
     startCommand: npm start
     envVars:
       - key: DATABASE_URL
@@ -31,4 +31,6 @@ services:
         value: "true"
       - key: NODE_ENV
         value: production
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: /opt/render/.cache/ms-playwright
 
