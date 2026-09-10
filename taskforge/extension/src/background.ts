@@ -4,6 +4,11 @@ import { getFreshAuthToken } from './auth.js';
 chrome.runtime.onInstalled.addListener(() => {
   console.log('[TaskForge Background] Extension installed.');
   chrome.storage.local.set({ isRecording: false, recordingQueue: [] });
+  chrome.alarms.create('taskforge-desktop-run-poll', { periodInMinutes: 0.5 });
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  chrome.alarms.create('taskforge-desktop-run-poll', { periodInMinutes: 0.5 });
 });
 
 const DEFAULT_BACKEND_URL = 'https://taskforge-bd.onrender.com/api/recordings';
@@ -31,6 +36,13 @@ function normalizeRecordingsUrl(urlStr: string): string {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'CHECK_PENDING_DESKTOP_RUNS') {
+    checkAndExecutePendingRuns()
+      .then(() => sendResponse({ status: 'checked' }))
+      .catch((err: any) => sendResponse({ status: 'error', error: err?.message || String(err) }));
+    return true;
+  }
+
   if (message.type === 'START_RECORDING') {
     chrome.storage.local.set({ isRecording: true, recordingQueue: [] }, () => {
       console.log('[TaskForge Background] Recording started.');
@@ -333,5 +345,11 @@ async function checkAndExecutePendingRuns() {
   }
 }
 
-// Start polling every 1.2 seconds for instant desktop browser tab execution
-setInterval(checkAndExecutePendingRuns, 1200);
+// Manifest V3 service workers are suspended when idle, so setInterval is not
+// reliable. Alarms wake the worker reliably; dashboard messages provide the
+// immediate, sub-second path after a user presses Run Workflow.
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'taskforge-desktop-run-poll') {
+    void checkAndExecutePendingRuns();
+  }
+});

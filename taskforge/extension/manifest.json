@@ -12,7 +12,8 @@
     "tabs",
     "scripting",
     "downloads",
-    "storage"
+    "storage",
+    "alarms"
   ],
   "host_permissions": [
     "http://localhost:3001/*",

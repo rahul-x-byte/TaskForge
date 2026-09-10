@@ -238,7 +238,15 @@ export async function triggerWorkflowRun(workflowId: string, executionMode: 'des
     body: JSON.stringify({ executionMode }),
   });
   if (!res.ok) throw new Error('Failed to trigger workflow run');
-  return await res.json();
+  const run = await res.json();
+  if (executionMode === 'desktop' && typeof window !== 'undefined') {
+    window.postMessage({
+      source: 'taskforge-dashboard',
+      type: 'DESKTOP_RUN_QUEUED',
+      runId: run.runId,
+    }, window.location.origin);
+  }
+  return run;
 }
 
 export async function createWorkflowFromTemplate(templateId: string): Promise<{ workflowId: string; versionId: string; name: string; stepCount: number }> {

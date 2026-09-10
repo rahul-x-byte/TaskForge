@@ -17,6 +17,23 @@ interface RecordedAction {
   isSensitive?: boolean;
 }
 
+// The dashboard page cannot use chrome.runtime directly. This small bridge
+// wakes the extension as soon as it queues a desktop run.
+window.addEventListener('message', (event: MessageEvent) => {
+  const hostname = window.location.hostname;
+  const isTaskForgeDashboard = hostname === 'task-forge-phi-six.vercel.app' ||
+    hostname === 'localhost' || hostname === '127.0.0.1';
+  if (
+    !isTaskForgeDashboard ||
+    event.source !== window ||
+    event.data?.source !== 'taskforge-dashboard' ||
+    event.data?.type !== 'DESKTOP_RUN_QUEUED'
+  ) {
+    return;
+  }
+  chrome.runtime.sendMessage({ type: 'CHECK_PENDING_DESKTOP_RUNS' });
+});
+
 // Strictly sanitize values to ensure SelectorBundle properties are non-boolean strings
 function sanitizeString(val: unknown): string | undefined {
   if (typeof val === 'string') {
