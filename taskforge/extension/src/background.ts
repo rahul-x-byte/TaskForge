@@ -196,13 +196,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function checkAndExecutePendingRuns() {
   try {
     const storage = await chrome.storage.local.get(['backendUrl', 'isRecording', 'desktopExecutionEnabled']);
-    if (storage.isRecording || !storage.desktopExecutionEnabled) return;
+    // Local execution is enabled by default. It can be explicitly disabled in
+    // extension storage without making the dashboard silently unusable.
+    if (storage.isRecording || storage.desktopExecutionEnabled === false) return;
 
     let base = normalizeRecordingsUrl(storage.backendUrl || DEFAULT_BACKEND_URL);
     base = base.replace(/\/recordings$/, '');
+    const token = await getFreshAuthToken();
+    if (!token) return;
+    const apiFetch = (path: string, options: RequestInit = {}) => {
+      const headers = new Headers(options.headers || {});
+      headers.set('Authorization', `Bearer ${token}`);
+      return fetch(`${base}${path}`, { ...options, headers });
+    };
 
-    // Poll pending runs from backend
-    const res = await fetch(`${base}/runs/pending`).catch(() => null);
+    // This endpoint is scoped to the signed-in user. Do not use worker-only
+    // endpoints here: their secret must never be shipped to the extension.
+    const res = await apiFetch('/desktop-runs/pending').catch(() => null);
     if (!res || !res.ok) return;
 
     const pendingRuns: any[] = await res.json().catch(() => []);
@@ -213,32 +223,20 @@ async function checkAndExecutePendingRuns() {
     const workflowId = targetRun.workflow_id;
 
     // Claim pending run
-    const claimRes = await fetch(`${base}/runs/${runId}/claim`, { method: 'POST' }).catch(() => null);
+    const claimRes = await apiFetch(`/desktop-runs/${runId}/claim`, { method: 'POST' }).catch(() => null);
     if (!claimRes || !claimRes.ok) return;
 
     console.log(`[Extension Poller] Claimed pending run ${runId} for workflow ${workflowId}. Starting browser tab execution...`);
 
-    await fetch(`${base}/runs/${runId}/status`, {
+    await apiFetch(`/desktop-runs/${runId}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'running' }),
     }).catch(() => {});
 
-    // Fetch workflow steps
-    const wfRes = await fetch(`${base}/workflows/${workflowId}`).catch(() => null);
-    if (!wfRes || !wfRes.ok) {
-      await fetch(`${base}/runs/${runId}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'failed', error: 'Failed to load workflow steps' }),
-      }).catch(() => {});
-      return;
-    }
-
-    const wfData: any = await wfRes.json();
-    const steps = wfData.steps || [];
+    const steps = targetRun.steps || [];
     if (!Array.isArray(steps) || steps.length === 0) {
-      await fetch(`${base}/runs/${runId}/status`, {
+      await apiFetch(`/desktop-runs/${runId}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'completed', finishedAt: new Date().toISOString() }),
@@ -251,7 +249,7 @@ async function checkAndExecutePendingRuns() {
 
     chrome.tabs.create({ url: initialUrl }, (tab) => {
       if (!tab || !tab.id) {
-        fetch(`${base}/runs/${runId}/status`, {
+        apiFetch(`/desktop-runs/${runId}/status`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: 'failed', error: 'Failed to create browser tab' }),
@@ -268,7 +266,7 @@ async function checkAndExecutePendingRuns() {
           const runNextStep = () => {
             if (stepIdx >= steps.length) {
               console.log(`[Extension Poller] Run ${runId} completed in browser tab!`);
-              fetch(`${base}/runs/${runId}/status`, {
+              apiFetch(`/desktop-runs/${runId}/status`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: 'completed', finishedAt: new Date().toISOString() }),
@@ -284,7 +282,7 @@ async function checkAndExecutePendingRuns() {
                                 (typeof currentStep.selectors?.css === 'string' && currentStep.selectors.css !== 'true' && currentStep.selectors.css) ||
                                 currentStep.value || currentStep.pageUrl || 'Target element';
 
-            fetch(`${base}/runs/${runId}/status`, {
+            apiFetch(`/desktop-runs/${runId}/status`, {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -299,7 +297,7 @@ async function checkAndExecutePendingRuns() {
               if (chrome.runtime.lastError || !response || response.status !== 'success') {
                 const errMsg = response?.error || chrome.runtime.lastError?.message || `Step ${currentIdx + 1} execution failed (${response?.status || 'error'})`;
                 console.error(`[Extension Poller Error] Step ${currentIdx + 1} failed:`, errMsg);
-                fetch(`${base}/runs/${runId}/status`, {
+                apiFetch(`/desktop-runs/${runId}/status`, {
                   method: 'PATCH',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({

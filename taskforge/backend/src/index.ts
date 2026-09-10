@@ -674,6 +674,9 @@ app.delete('/api/workflows/:id', { preHandler: [requireAuth] }, async (request, 
 app.post('/api/workflows/:id/run', { preHandler: [requireAuth] }, async (request, reply) => {
   const user = request.user!;
   const { id } = request.params as { id: string };
+  const executionMode = (request.body as { executionMode?: string } | undefined)?.executionMode === 'desktop'
+    ? 'desktop'
+    : 'cloud';
 
   let checkQuery = 'SELECT * FROM workflows WHERE id = $1';
   let checkParams = [id];
@@ -692,15 +695,18 @@ app.post('/api/workflows/:id/run', { preHandler: [requireAuth] }, async (request
 
   await pool.query(
     'INSERT INTO runs (id, workflow_id, version_id, status) VALUES ($1, $2, $3, $4)',
-    [runId, id, wf.current_version_id, 'pending']
+    [runId, id, wf.current_version_id, executionMode === 'desktop' ? 'pending_desktop' : 'pending']
   );
 
-  // Trigger non-blocking worker execution
-  executeWorkflowRun(id, wf.current_version_id, runId).catch((err) => {
-    console.error(`[Execution Error] Run ${runId} failed:`, err);
-  });
+  // A desktop run is claimed by the authenticated browser extension. Cloud runs
+  // continue to use Playwright on the server.
+  if (executionMode === 'cloud') {
+    executeWorkflowRun(id, wf.current_version_id, runId).catch((err) => {
+      console.error(`[Execution Error] Run ${runId} failed:`, err);
+    });
+  }
 
-  return reply.status(202).send({ runId, status: 'pending', workflowId: id });
+  return reply.status(202).send({ runId, status: executionMode === 'desktop' ? 'pending_desktop' : 'pending', workflowId: id, executionMode });
 });
 
 /**
@@ -1081,7 +1087,55 @@ app.get('/api/admin/stats', { preHandler: [requireAdmin] }, async (request, repl
 });
 
 // ====================================================
-// 5. INTERNAL WORKER APIS (AUTHENTICATED VIA X-WORKER-SECRET)
+// 5. DESKTOP EXTENSION APIS (AUTHENTICATED AS THE WORKFLOW OWNER)
+// ====================================================
+
+app.get('/api/desktop-runs/pending', { preHandler: [requireAuth] }, async (request, reply) => {
+  const user = request.user!;
+  const res = await pool.query(
+    `SELECT r.*, wv.steps
+     FROM runs r
+     JOIN workflows w ON w.id = r.workflow_id
+     LEFT JOIN workflow_versions wv ON wv.id = r.version_id
+     WHERE r.status = 'pending_desktop' AND w.user_id = $1
+     ORDER BY r.started_at ASC
+     LIMIT 1`,
+    [user.id]
+  );
+  return reply.send(res.rows);
+});
+
+app.post('/api/desktop-runs/:id/claim', { preHandler: [requireAuth] }, async (request, reply) => {
+  const user = request.user!;
+  const { id } = request.params as { id: string };
+  const res = await pool.query(
+    `UPDATE runs r
+     SET status = 'claimed'
+     FROM workflows w
+     WHERE r.id = $1 AND r.workflow_id = w.id AND w.user_id = $2 AND r.status = 'pending_desktop'
+     RETURNING r.*`,
+    [id, user.id]
+  );
+  if (res.rows.length === 0) return reply.status(409).send({ error: 'Run is unavailable or access is denied' });
+  return reply.send(res.rows[0]);
+});
+
+app.patch('/api/desktop-runs/:id/status', { preHandler: [requireAuth] }, async (request, reply) => {
+  const user = request.user!;
+  const { id } = request.params as { id: string };
+  const ownership = await pool.query(
+    `SELECT r.id FROM runs r JOIN workflows w ON w.id = r.workflow_id WHERE r.id = $1 AND w.user_id = $2`,
+    [id, user.id]
+  );
+  if (ownership.rows.length === 0) return reply.status(404).send({ error: 'Run not found or access denied' });
+
+  const body = request.body as any;
+  await updateRunStatus(id, body?.status, body?.detail, body?.error);
+  return reply.send({ status: 'updated', runId: id });
+});
+
+// ====================================================
+// 6. INTERNAL WORKER APIS (AUTHENTICATED VIA X-WORKER-SECRET)
 // ====================================================
 
 app.get('/api/runs/pending', { preHandler: [verifyWorkerSecret] }, async (request, reply) => {

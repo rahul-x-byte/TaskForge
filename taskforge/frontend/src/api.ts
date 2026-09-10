@@ -231,11 +231,11 @@ export async function deleteWorkflow(workflowId: string): Promise<void> {
   }
 }
 
-export async function triggerWorkflowRun(workflowId: string): Promise<{ runId: string; status: string }> {
+export async function triggerWorkflowRun(workflowId: string, executionMode: 'desktop' | 'cloud' = 'desktop'): Promise<{ runId: string; status: string }> {
   const res = await authFetch(`${API_BASE}/workflows/${workflowId}/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({}),
+    body: JSON.stringify({ executionMode }),
   });
   if (!res.ok) throw new Error('Failed to trigger workflow run');
   return await res.json();

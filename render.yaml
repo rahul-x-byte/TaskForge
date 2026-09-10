@@ -11,7 +11,10 @@ services:
     runtime: node
     plan: free
     rootDir: taskforge/backend
-    buildCommand: npm install && npm run build && npx playwright install chromium && npx playwright install --list
+    # Store Chromium inside node_modules so it is included in Render's build
+    # artifact. The default /opt/render cache is not reliably retained by the
+    # runtime container.
+    buildCommand: npm install && npm run build && PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install chromium && PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install --list
     startCommand: npm start
     envVars:
       - key: DATABASE_URL
@@ -32,5 +35,4 @@ services:
       - key: NODE_ENV
         value: production
       - key: PLAYWRIGHT_BROWSERS_PATH
-        value: /opt/render/.cache/ms-playwright
-
+        value: "0"

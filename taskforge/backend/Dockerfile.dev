@@ -1,8 +1,9 @@
 FROM node:22-alpine
+ENV PLAYWRIGHT_BROWSERS_PATH=0
 WORKDIR /app
 COPY taskforge/shared ./taskforge/shared
 COPY taskforge/backend ./taskforge/backend
 RUN cd taskforge/shared && npm install && npm run build
-RUN cd taskforge/backend && npm install && npm run build
+RUN cd taskforge/backend && npm install && npm run build && npx playwright install chromium
 EXPOSE 3001
 CMD ["node", "taskforge/backend/dist/index.js"]
